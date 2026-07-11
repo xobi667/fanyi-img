@@ -22,5 +22,6 @@ generated_images/
 
 fanyi_report.txt
 fanyi_failed.txt
+fanyi_preflight_report.txt
 fanyi_optimize_report.txt
 fanyi_optimize_failed.txt
