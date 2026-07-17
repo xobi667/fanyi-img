@@ -13,6 +13,7 @@ from PIL import Image, ImageFilter, ImageOps, ImageStat, UnidentifiedImageError
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
 LANG_SUFFIXES = ["英语", "泰语", "印尼语", "越南语", "马来语", "西班牙语", "阿拉伯语"]
 REPORT_NAME = "fanyi_preflight_report.txt"
+DEFAULT_WORKERS = 4
 
 
 @dataclass
@@ -180,6 +181,8 @@ def write_report(report_path: Path, rows: list[dict[str, str]]) -> None:
     report_path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
         "kind",
+        "task_id",
+        "worker_id",
         "source",
         "relative_path",
         "width",
@@ -213,6 +216,7 @@ def main() -> int:
     parser.add_argument("--require-square", action="store_true", help="Flag non-square source images as needing 1:1 handling.")
     parser.add_argument("--report", type=Path, help=f"Report path. Default: final output directory/{REPORT_NAME}.")
     parser.add_argument("--show-limit", type=int, default=20, help="Number of suggested actions to print. Default: 20.")
+    parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS, choices=range(1, DEFAULT_WORKERS + 1), metavar="1-4", help="Number of isolated worker assignments. Default: 4.")
     args = parser.parse_args()
 
     input_path = args.input.resolve()
@@ -235,6 +239,8 @@ def main() -> int:
     root = input_path if input_path.is_dir() else input_path.parent
     rows: list[dict[str, str]] = []
     printed: list[dict[str, str]] = []
+    next_task = 0
+    worker_counts = {worker_id: 0 for worker_id in range(1, args.workers + 1)}
 
     counts = {
         "images": 0,
@@ -256,6 +262,15 @@ def main() -> int:
         raw_status = "exists" if raw_exists(info, input_path, raw_dir, args.target_suffix) else "missing"
         final_status = validate_final(final_path, args.final_size, min_bytes, max_bytes)
         action = suggest_action(info, args.require_square, final_status, raw_status)
+        if action == "skip_existing_valid_final":
+            task_id = ""
+            worker_id = ""
+        else:
+            task_id = f"task-{next_task + 1:06d}"
+            assigned_worker = (next_task % args.workers) + 1
+            worker_id = f"worker-{assigned_worker}"
+            worker_counts[assigned_worker] += 1
+            next_task += 1
 
         counts["images"] += 1
         counts["blank_like"] += int(info.blank_like)
@@ -269,6 +284,8 @@ def main() -> int:
 
         row = {
             "kind": "image",
+            "task_id": task_id,
+            "worker_id": worker_id,
             "source": str(path),
             "relative_path": str(rel),
             "width": str(info.width),
@@ -293,6 +310,8 @@ def main() -> int:
         rows.append(
             {
                 "kind": "non_image",
+                "task_id": "",
+                "worker_id": "",
                 "source": str(path),
                 "relative_path": str(rel),
                 "width": "",
@@ -318,6 +337,8 @@ def main() -> int:
     print(f"raw_dir={raw_dir}")
     print(f"report={report_path}")
     print(f"images={counts['images']} non_images={counts['non_images']}")
+    print(f"workers={args.workers} assigned_tasks={next_task}")
+    print("worker_assignments=" + ",".join(f"worker-{worker_id}:{worker_counts[worker_id]}" for worker_id in worker_counts))
     print(f"blank_like={counts['blank_like']} visual_content={counts['visual_content']} non_square={counts['non_square']}")
     print(f"raw_missing={counts['raw_missing']} final_valid={counts['final_valid']} final_missing={counts['final_missing']} final_invalid={counts['final_invalid']}")
     if args.require_square:
@@ -329,7 +350,7 @@ def main() -> int:
         print(f"first_suggested_actions={len(printed)}")
         for row in printed:
             print(
-                f"- {row['relative_path']} {row['width']}x{row['height']} "
+                f"- {row['task_id']} {row['worker_id']} {row['relative_path']} {row['width']}x{row['height']} "
                 f"square={row['square_ok']} blank={row['blank_like']} final={row['final_status']} "
                 f"action={row['suggested_action']}"
             )

@@ -56,34 +56,39 @@ Codex 生图 prompt 必须从同等强度的英文禁令开始：
 STRICT NO-ADDITION RULE: Translate only the visible text that already exists in the source image. Do not add, invent, infer, complete, or hallucinate any new text, slogans, selling points, labels, badges, icons, parameters, footer text, or decorative wording. Do not use the filename, SKU name, folder name, product category, or visual appearance to create text. If an area has no text in the original image, keep it completely text-free. Keep the number of text blocks and their positions the same as the original. Only replace existing text with its translation.
 ```
 
-## 死命令：必须一张一张顺序处理
+## 死命令：最多 4 个隔离 worker
 
-批量任务必须串行处理，一张完成并保存后再处理下一张。
+批量任务一般情况下默认使用 `MAX_WORKERS = 4`。每个 worker 内必须逐张处理，一张完成并保存后再领取下一张，不允许超过 4。
 
-- 默认 `MAX_WORKERS = 1`，不允许为了速度改成 2、5、10 或更高。
-- 每次 Codex 生图请求只能传入当前这一张源图。
-- 当前 prompt 只能描述当前这一张图，不能包含其它图片的信息。
-- 禁止多张并发、禁止多图同传、禁止把多张图内容混到同一张结果图。
-- 失败重试必须发生在当前图片内部；当前图片成功或记入失败后，才允许进入下一张。
+- 每次 Codex 生图请求只能传入当前 worker 正在处理的这一张源图。
+- 当前 prompt、文字锁、重试状态和输出路径只能属于当前图片，不能包含其它图片的信息。
+- 禁止多图同传、禁止共享 prompt 或会话图片、禁止把多张图内容混到同一张结果图。
+- 同一个源文件只能由一个 worker 领取；领取和输出落盘必须防重复。
+- 主协调者兼任 `worker-1`，另外启动 `worker-2`、`worker-3`、`worker-4`，四者同时处理各自分片；不是四个 worker 对同一张图各做一遍。
+- 批量至少有 4 个待处理任务时必须启用 4 个 worker；不足 4 张时只启用与任务数相同的 worker，禁止复制任务凑满 4 个。
+- 必须以预检报告中的 `task_id` 和 `worker_id` 为唯一分工清单。一个 `task_id` 只能出现一次、只能归属一个 worker，worker 不得自行扫描或领取其它分片。
+- 失败重试必须发生在当前 worker 的当前图片内部；成功或记入失败后，该 worker 才能领取下一张。
+- 单次失败不能立即降级。对当前图片至少完成 3 次重试，并对网络错误、超时或限流使用递增等待；其他 worker 继续处理自己的独立分片。
+- 如果运行环境明确不支持并行，或 4 路在多次重试后持续出现同类基础设施错误，停止并行并直接降级为 `MAX_WORKERS = 1`。按原任务清单逐张补跑，不重新生成 task_id，不重复已成功图片。
+- 4 个 worker 完成后统一汇总结果，确认每个输入文件恰好对应一个终态，再执行最终优化。
 
-脚本实现必须使用类似逻辑：
-
-```text
-for image in images:
-    process_one_image(image)
-    save_result(image)
-    then continue to next image
-```
-
-禁止使用：
+推荐调度逻辑：
 
 ```text
-ThreadPoolExecutor
-ProcessPoolExecutor
-asyncio.gather
-parallel map
-批量把多张图同时发起生图请求
+MAX_WORKERS = min(4, 可用执行槽位数, 待处理图片数)
+运行 preflight_fanyi.py --workers 4，按报告的 task_id/worker_id 分工
+主协调者兼 worker-1，另启 worker-2、worker-3、worker-4
+每个 worker:
+    for image in 自己的分片:
+        process_one_image(image)
+        save_result_atomically(image)
+        then continue to next image
+等待全部 worker 完成
+合并报告并检查重复、遗漏和失败
+若平台不支持并行或充分重试仍持续失败：MAX_WORKERS = 1，按原清单逐张补跑
 ```
+
+禁止使用没有图片隔离、没有输出去重或没有限流退避的裸并发。不要在本地脚本中调用外部生图 API；并发只能调度 Codex 内置图片编辑任务。
 
 ## 死命令：唯一生图通道是 Codex
 
@@ -138,7 +143,7 @@ python scripts/final_optimize_images.py --input RAW_OUTPUT_DIR --output OUTPUT_D
 1. 判断输入是单图还是文件夹。
 2. 判断目标语言、输出后缀、是否要求 1:1、是否覆盖、是否只补缺。
 3. 批量任务先运行 `scripts/preflight_fanyi.py` 生成处理清单。
-4. 按清单逐张串行处理，跳过输出目录和原始生图目录。
+4. 按清单分配最多 4 个隔离 worker；每个 worker 内逐张处理，并跳过输出目录和原始生图目录。
 5. 组装 prompt 前读取 `references/prompts.md`，可见文字翻译时读取 `references/glossary.md`。
 6. 每次只把当前源图传给 Codex 生图。
 7. 输出后按 `references/quality.md` 做基础质检；失败则当前图片内部重试。
@@ -148,7 +153,7 @@ python scripts/final_optimize_images.py --input RAW_OUTPUT_DIR --output OUTPUT_D
 预检推荐命令：
 
 ```text
-python scripts/preflight_fanyi.py --input INPUT_DIR --target-suffix 英语 --require-square
+python scripts/preflight_fanyi.py --input INPUT_DIR --target-suffix 英语 --require-square --workers 4
 ```
 
 ## 最终回复用户时
