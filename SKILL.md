@@ -60,7 +60,7 @@ STRICT NO-ADDITION RULE: Translate only the visible text that already exists in 
 
 批量任务一般情况下默认使用 `MAX_WORKERS = 4`。每个 worker 内必须逐张处理，一张完成并保存后再领取下一张，不允许超过 4。
 
-- 每次 Codex 生图请求只能传入当前 worker 正在处理的这一张源图。
+- 每个 worker 先用视觉查看当前源图，再为当前图片单独组装简短 prompt；默认调用直接纯生图，不传 `referenced_image_paths`。
 - 当前 prompt、文字锁、重试状态和输出路径只能属于当前图片，不能包含其它图片的信息。
 - 禁止多图同传、禁止共享 prompt 或会话图片、禁止把多张图内容混到同一张结果图。
 - 同一个源文件只能由一个 worker 领取；领取和输出落盘必须防重复。
@@ -94,7 +94,10 @@ MAX_WORKERS = min(4, 可用执行槽位数, 待处理图片数)
 
 唯一允许的图片生成/编辑通道是 Codex 内置图片编辑/生图能力。
 
-- 有本地源图路径时，每次只传当前这一张图，例如 `referenced_image_paths = [当前源图绝对路径]`。
+- 默认流程是直接纯生图：先查看当前源图，锁定商品、构图、全部可见文字块和目标语言翻译，再调用 Codex 生图；省略 `referenced_image_paths`。
+- prompt 必须短而明确，描述主要商品构图，并逐项给出允许出现的目标语言文字；不要把整份长规则原样塞进单次请求。
+- 除非用户明确要求“编辑原图 / 像素级保持 / 使用参考图”，否则不要调用参考图编辑，不要传本地源图路径。
+- 一个纯生图请求只对应当前一个 task_id，不得混入其它图片的信息。
 - 如果 Codex 生图工具返回本地生成文件路径，把该结果保存到目标输出路径。
 - 如果 Codex 生图工具只返回会话图片而没有可保存的本地路径，必须在报告中记录未能落盘，不要改用本地贴字、裁剪或重绘伪造结果。
 
@@ -145,7 +148,7 @@ python scripts/final_optimize_images.py --input RAW_OUTPUT_DIR --output OUTPUT_D
 3. 批量任务先运行 `scripts/preflight_fanyi.py` 生成处理清单。
 4. 按清单分配最多 4 个隔离 worker；每个 worker 内逐张处理，并跳过输出目录和原始生图目录。
 5. 组装 prompt 前读取 `references/prompts.md`，可见文字翻译时读取 `references/glossary.md`。
-6. 每次只把当前源图传给 Codex 生图。
+6. 每次先查看当前源图，再用只针对当前图片的简短 prompt 直接纯生图；默认不传参考图。
 7. 输出后按 `references/quality.md` 做基础质检；失败则当前图片内部重试。
 8. 全部完成后运行最终优化脚本。
 9. 检查最终优化报告，确认每张最终图片为 800x800 JPG，体积在 900KB-1024KB。

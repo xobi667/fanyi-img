@@ -1,8 +1,25 @@
 # fanyi Prompt Rules
 
+## 默认直接纯生图
+
+默认先查看当前源图，再调用 Codex 直接纯生图，不传 `referenced_image_paths`。只有用户明确要求编辑原图时才使用参考图编辑。
+
+单次 prompt 保持简短，通常包含：
+
+```text
+{比例和目标语言} e-commerce ad showing {当前图的商品与主要构图}.
+Text blocks exactly: “{目标语言文字1}”, “{目标语言文字2}”...
+Exactly these text blocks, no other text, no watermark.
+```
+
+- 必须先从源图建立文字锁，再写目标语言文字；不能根据文件名补文案。
+- 复杂多步骤图可以逐项列出步骤，但不要粘贴整份长规则。
+- 一个请求只生成一个 task_id；不同图片不得共用 prompt 或会话图片。
+- 生成成功后立即把 Codex 返回文件复制到该任务的原始生图输出路径，并保留生成器原文件。
+
 ## 强制总模板
 
-每张图生成时，prompt 必须动态包含目标语言、比例、画质、字体、单位、可读性要求，并且必须把“只翻译原图已有文字、严禁新增文字”放在最前面。
+以下是约束全集，用于组装当前图片的简短 prompt，不要整段原样提交。每张图生成时必须体现目标语言、构图、可见文字锁和“严禁新增文字”。
 
 ```text
 Translate this product advertisement image into {TARGET_LANGUAGE}.

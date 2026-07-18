@@ -171,9 +171,9 @@ python scripts/final_optimize_images.py --input RAW_OUTPUT_DIR --output OUTPUT_D
 7. 非图片文件默认在最终优化阶段复制到最终输出目录。
 8. 无文字商品图、纯产品图、素材图、空白图、纯色图、透明图、无文案占位图只能跳过文字翻译，不能跳过比例处理、瑕疵清理和最终优化。
 9. 有文案/不确定图片默认走 Codex 生图，并把原始结果保存到 `RAW_OUTPUT_DIR`。
-10. 调用 Codex 生图时，每次只把当前这一张源图作为 `referenced_image_paths` 传入。
+10. 查看当前源图并锁定商品、构图和文字后，使用简短 prompt 调用 Codex 直接纯生图；默认省略 `referenced_image_paths`。只有用户明确要求编辑原图时才使用参考图编辑。
 11. 一般情况下默认使用 `MAX_WORKERS = 4`，不得超过 4。只有待处理任务不足 4 个时，worker 数才等于任务数。
-12. 运行预检时传入 `--workers 4`，以报告中的 `task_id` 和 `worker_id` 为唯一分工清单。主协调者兼任 worker-1，另外启动 worker-2、worker-3、worker-4；四者同时处理互不重叠的任务。每个 worker 内一张一张处理，每次请求只传当前一张源图。
+12. 运行预检时传入 `--workers 4`，以报告中的 `task_id` 和 `worker_id` 为唯一分工清单。主协调者兼任 worker-1，另外启动 worker-2、worker-3、worker-4；四者同时处理互不重叠的任务。每个 worker 内一张一张处理，每次纯生图 prompt 只描述当前任务。
 13. 失败自动重试，但必须在当前 worker 的当前图片内部完成至少 3 次重试；网络错误、超时和限流使用递增等待。单次失败不得立即降低并发，prompt、文字锁、输出路径和会话图片不得跨 worker 共享。
 14. 如果运行环境明确不支持并行，或 4 路在充分重试后仍持续出现同类基础设施错误，直接降级为 `MAX_WORKERS = 1`，沿用原 task_id 清单逐张补跑，跳过已成功输出。
 15. 所有 worker 完成后合并结果，验证每个 `task_id` 恰好有一个终态、一个 worker 归属和一个目标输出；发现重复领取、重复输出或遗漏时停止最终优化并修正清单。
