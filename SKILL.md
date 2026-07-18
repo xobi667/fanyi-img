@@ -1,6 +1,6 @@
 ---
 name: fanyi
-description: Codex 专属商品图翻译技能，必须使用 Codex 内置生图/图片编辑能力，把商品图片中的中文翻译成英语、泰语、印尼语等目标语言，并生成指定比例的电商成品图；比例未明确时必须先询问，不能默认开始生图。翻译全部完成后默认做最终图片优化；1:1 输出 800x800 JPG 且文件体积控制在 900KB-1024KB，其他比例按用户确认的尺寸输出。适用于单张图片、整个文件夹、主图/详情/sku 批量翻译、无文字商品图/纯产品图按比例优化、空白图按比例优化、方图、画质优化、边角清理、字体排版优化、最终压缩等场景。
+description: Codex 专属商品图翻译技能，必须使用 Codex 内置生图/图片编辑能力，把商品图片中的中文翻译成英语、泰语、印尼语等目标语言，并生成指定比例的电商成品图；目标语言或比例未明确时必须先询问，不能默认开始生图。翻译全部完成后默认做最终图片优化；1:1 输出 800x800 JPG 且文件体积控制在 900KB-1024KB，其他比例按用户确认的尺寸输出。适用于单张图片、整个文件夹、主图/详情/sku 批量翻译、无文字商品图/纯产品图按比例优化、空白图按比例优化、方图、画质优化、边角清理、字体排版优化、最终压缩等场景。
 ---
 
 # fanyi
@@ -56,15 +56,19 @@ Codex 生图 prompt 必须从同等强度的英文禁令开始：
 STRICT NO-ADDITION RULE: Translate only the visible text that already exists in the source image. Do not add, invent, infer, complete, or hallucinate any new text, slogans, selling points, labels, badges, icons, parameters, footer text, or decorative wording. Do not use the filename, SKU name, folder name, product category, or visual appearance to create text. If an area has no text in the original image, keep it completely text-free. Keep the number of text blocks and their positions the same as the original. Only replace existing text with its translation.
 ```
 
-## 死命令：比例不明确时必须先问
+## 死命令：目标语言和比例不明确时必须先问
 
-开始预检分片和任何生图前，必须确认用户需要的输出比例。
+开始预检分片和任何生图前，必须同时确认目标语言和输出比例。
 
+- 用户没有明确目标语言时，暂停执行并询问：`亲亲，请问需要翻译成什么语言？`
 - 用户没有明确比例时，暂停执行并询问：`亲亲，请问需要什么图片比例？例如 1:1、4:5、3:4、9:16，或者保持原比例。`
+- 用户只上传或提供了文件夹/文件路径，且目标语言与比例都未明确时，一次性询问：`亲亲，请问需要翻译成什么语言，以及需要什么图片比例？例如 1:1、4:5、3:4、9:16，或者保持原比例。`
+- 只缺目标语言时只询问目标语言；只缺比例时只询问比例，避免重复询问用户已经明确的信息。
+- 用户已经明确目标语言时，直接按该语言执行，不要根据路径名、文件名、历史任务或源图文字猜测或改成其他语言，也不要重复询问。
 - 用户已经明确说 `1:1`、`4:5`、`3:4`、`9:16` 或 `保持原比例` 时，直接按该比例执行，不要重复询问。
 - 不允许根据电商平台、源图尺寸、历史任务或默认最终优化规则猜测比例。
 - 用户选择非 1:1 比例但未给目标像素尺寸时，继续确认目标尺寸后再开始；1:1 默认最终尺寸为 800x800。
-- 比例和尺寸未确认前，不启动 worker、不调用生图、不创建正式输出成品。
+- 目标语言、比例和必要尺寸未全部确认前，不运行预检、不启动 worker、不调用生图、不创建正式输出目录或成品。
 
 ## 死命令：最多 4 个隔离 worker
 
@@ -154,7 +158,7 @@ python scripts/final_optimize_images.py --input RAW_OUTPUT_DIR --output OUTPUT_D
 ## 推荐执行顺序
 
 1. 判断输入是单图还是文件夹。
-2. 确认目标语言和输出比例；比例未明确时先询问，非 1:1 且尺寸未明确时继续询问尺寸。
+2. 确认目标语言和输出比例；缺少其中任一项时先询问，两项都缺时一次问完；非 1:1 且尺寸未明确时继续询问尺寸。
 3. 判断输出后缀、是否覆盖、是否只补缺。
 4. 批量任务先运行 `scripts/preflight_fanyi.py` 生成处理清单。
 5. 按清单分配最多 4 个隔离 worker；每个 worker 内逐张处理，并跳过输出目录和原始生图目录。
