@@ -1,6 +1,6 @@
 ---
 name: fanyi
-description: Codex 专属商品图翻译技能，必须使用 Codex 内置生图/图片编辑能力，把商品图片中的中文翻译成英语、泰语、印尼语等目标语言，并生成电商成品图；翻译全部完成后默认做最终图片优化，输出 800x800 JPG 且文件体积控制在 900KB-1024KB。适用于单张图片、整个文件夹、主图/详情/sku 批量翻译、无文字商品图/纯产品图按比例优化、空白图按比例优化、1:1 方图、画质优化、边角清理、字体排版优化、最终压缩等场景。
+description: Codex 专属商品图翻译技能，必须使用 Codex 内置生图/图片编辑能力，把商品图片中的中文翻译成英语、泰语、印尼语等目标语言，并生成指定比例的电商成品图；比例未明确时必须先询问，不能默认开始生图。翻译全部完成后默认做最终图片优化；1:1 输出 800x800 JPG 且文件体积控制在 900KB-1024KB，其他比例按用户确认的尺寸输出。适用于单张图片、整个文件夹、主图/详情/sku 批量翻译、无文字商品图/纯产品图按比例优化、空白图按比例优化、方图、画质优化、边角清理、字体排版优化、最终压缩等场景。
 ---
 
 # fanyi
@@ -13,7 +13,7 @@ description: Codex 专属商品图翻译技能，必须使用 Codex 内置生图
 
 本 skill 是 Codex 专属流程。唯一允许的生图通道是 Codex 内置生图/图片编辑能力，不配置、不读取、不调用任何外部图片编辑服务。
 
-翻译、生图、质检全部完成后，默认必须执行最终图片优化：输出 800x800 JPG，文件体积控制在 900KB-1024KB。只有用户明确说“不压缩 / 不要最终优化 / 保留原尺寸原体积”时，才跳过。
+翻译、生图、质检全部完成后，默认必须执行最终图片优化。用户确认 1:1 时输出 800x800 JPG，文件体积控制在 900KB-1024KB；其他比例按确认的目标尺寸输出。只有用户明确说“不压缩 / 不要最终优化 / 保留原尺寸原体积”时，才跳过。
 
 ## 必读引用
 
@@ -27,7 +27,7 @@ description: Codex 专属商品图翻译技能，必须使用 Codex 内置生图
 可用脚本：
 
 - `scripts/preflight_fanyi.py`：批量预检输入图片、比例、已有输出、最终成品合规性，并输出处理清单。
-- `scripts/final_optimize_images.py`：翻译全部完成后统一输出 800x800 JPG，并把体积控制在 900KB-1024KB。
+- `scripts/final_optimize_images.py`：翻译全部完成后按已确认尺寸统一输出 JPG；1:1 默认 800x800，并把体积控制在 900KB-1024KB。
 
 ## 死命令：只翻译原图已有文字
 
@@ -55,6 +55,16 @@ Codex 生图 prompt 必须从同等强度的英文禁令开始：
 ```text
 STRICT NO-ADDITION RULE: Translate only the visible text that already exists in the source image. Do not add, invent, infer, complete, or hallucinate any new text, slogans, selling points, labels, badges, icons, parameters, footer text, or decorative wording. Do not use the filename, SKU name, folder name, product category, or visual appearance to create text. If an area has no text in the original image, keep it completely text-free. Keep the number of text blocks and their positions the same as the original. Only replace existing text with its translation.
 ```
+
+## 死命令：比例不明确时必须先问
+
+开始预检分片和任何生图前，必须确认用户需要的输出比例。
+
+- 用户没有明确比例时，暂停执行并询问：`亲亲，请问需要什么图片比例？例如 1:1、4:5、3:4、9:16，或者保持原比例。`
+- 用户已经明确说 `1:1`、`4:5`、`3:4`、`9:16` 或 `保持原比例` 时，直接按该比例执行，不要重复询问。
+- 不允许根据电商平台、源图尺寸、历史任务或默认最终优化规则猜测比例。
+- 用户选择非 1:1 比例但未给目标像素尺寸时，继续确认目标尺寸后再开始；1:1 默认最终尺寸为 800x800。
+- 比例和尺寸未确认前，不启动 worker、不调用生图、不创建正式输出成品。
 
 ## 死命令：最多 4 个隔离 worker
 
@@ -131,7 +141,7 @@ RAW_OUTPUT_DIR = 输入目录同级 / "项目名-目标语言中文名-原始生
 python scripts/final_optimize_images.py --input RAW_OUTPUT_DIR --output OUTPUT_DIR --size 800x800 --min-kb 900 --max-kb 1024
 ```
 
-默认最终成品必须满足：
+用户确认 1:1 时，默认最终成品必须满足：
 
 ```text
 最终成品尺寸：800x800 px
@@ -144,16 +154,17 @@ python scripts/final_optimize_images.py --input RAW_OUTPUT_DIR --output OUTPUT_D
 ## 推荐执行顺序
 
 1. 判断输入是单图还是文件夹。
-2. 判断目标语言、输出后缀、是否要求 1:1、是否覆盖、是否只补缺。
-3. 批量任务先运行 `scripts/preflight_fanyi.py` 生成处理清单。
-4. 按清单分配最多 4 个隔离 worker；每个 worker 内逐张处理，并跳过输出目录和原始生图目录。
-5. 组装 prompt 前读取 `references/prompts.md`，可见文字翻译时读取 `references/glossary.md`。
-6. 每次先查看当前源图，再用只针对当前图片的简短 prompt 直接纯生图；默认不传参考图。
-7. 输出后按 `references/quality.md` 做基础质检；失败则当前图片内部重试。
-8. 全部完成后运行最终优化脚本。
-9. 检查最终优化报告，确认每张最终图片为 800x800 JPG，体积在 900KB-1024KB。
+2. 确认目标语言和输出比例；比例未明确时先询问，非 1:1 且尺寸未明确时继续询问尺寸。
+3. 判断输出后缀、是否覆盖、是否只补缺。
+4. 批量任务先运行 `scripts/preflight_fanyi.py` 生成处理清单。
+5. 按清单分配最多 4 个隔离 worker；每个 worker 内逐张处理，并跳过输出目录和原始生图目录。
+6. 组装 prompt 前读取 `references/prompts.md`，可见文字翻译时读取 `references/glossary.md`。
+7. 每次先查看当前源图，再用只针对当前图片的简短 prompt 直接纯生图；默认不传参考图。
+8. 输出后按 `references/quality.md` 做基础质检；失败则当前图片内部重试。
+9. 全部完成后按已确认比例和尺寸运行最终优化脚本。
+10. 检查最终优化报告；1:1 默认确认每张为 800x800 JPG、900KB-1024KB，其他比例确认尺寸符合用户要求。
 
-预检推荐命令：
+用户确认 1:1 时的预检推荐命令：
 
 ```text
 python scripts/preflight_fanyi.py --input INPUT_DIR --target-suffix 英语 --require-square --workers 4
@@ -174,7 +185,8 @@ python scripts/preflight_fanyi.py --input INPUT_DIR --target-suffix 英语 --req
 无文字/空白图处理：...
 已存在跳过：...
 失败：...
-最终优化：800x800 JPG，900KB-1024KB
+确认比例/尺寸：...
+最终优化：...
 优化成功：...
 优化失败：...
 报告：...
