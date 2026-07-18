@@ -32,9 +32,11 @@ TEXT SCOPE LOCK: Before editing, identify the exact visible source text blocks i
 
 Keep the same product, main composition, layout structure, colors, icons, label positions, selling-point areas, and e-commerce design style as close as possible to the original. Do not add extra products or change the product.
 
+PRODUCT GEOMETRY LOCK: Preserve the product's natural aspect ratio, silhouette, thickness, width-to-height relationship, component proportions, material texture, and perspective. Never stretch, squash, widen, narrow, flatten, elongate, or locally enlarge the product to fill the requested canvas. Adapt to a new ratio only by extending text-free background, adding balanced breathing room, or recomposing the unchanged product at a natural scale.
+
 Improve only non-text visual quality: make the image clean, polished, premium, sharp, and ready for online marketplace use. Clean edges and corners. Remove unwanted white borders, black marks, dirty margins, crop leftovers, compression artifacts, and awkward blank areas through image generation. Keep the product and layout unchanged. These visual improvements must not introduce any new text.
 
-Keep translations concise and readable. If target-language text is longer than the source area, shorten only within the same meaning, wrap naturally, or reduce font size slightly. Do not add explanations or extra benefits.
+Keep translations concise and readable. If target-language text is longer than the source area, use this order: shorten only within the same meaning, wrap naturally, adjust the text box, then reduce font size slightly while keeping it readable. Never compress glyph width, stretch glyph height, tighten spacing until letters touch, overlap text, clip text, or distort typography. Do not add explanations or extra benefits.
 
 Absolutely avoid tiny unreadable text. Do not generate micro footer text, dense paragraphs, disclaimers, or decorative wording unless such text visibly exists in the source image.
 
@@ -65,6 +67,16 @@ Output must be a square 1:1 e-commerce image. Fill the canvas cleanly without un
 ```text
 Output must be a square 1:1 e-commerce image. You may extend the non-text visual background/product scene to fill the square canvas cleanly. Do not crop, stretch, or distort the product. Do not add any new text, SVG text, icon labels, slogans, parameters, or selling points while expanding. Blank/no-text areas in the source must remain text-free.
 ```
+
+## 任意比例转换要求
+
+只要目标比例与源图不同（包括 16:9、9:16、4:5、3:4 等），prompt 必须加入：
+
+```text
+Output must use the requested {TARGET_RATIO} canvas. Preserve the product's original natural proportions and geometry exactly: no stretching, squashing, widening, narrowing, flattening, elongating, or local deformation. Fit the new canvas by extending only text-free background, adding balanced negative space, or naturally recomposing the unchanged product. Preserve natural text glyph proportions. If translated text is long, shorten within the same meaning, wrap naturally, adjust the text box, or reduce font size slightly; never squeeze, stretch, overlap, clip, crowd, or warp the text.
+```
+
+“锁定产品尺寸”表示锁定商品相对比例和自然视觉尺度，不要求跨画布保留相同像素宽高。允许为构图整体等比缩放商品，但禁止非等比缩放和局部变形。
 
 ## 无文字商品图 / 空白图 prompt
 
@@ -104,8 +116,9 @@ Make icon labels clearer...
 
 - 不能为了完整逐字翻译，把字做得极小、很挤、重叠或超出区域。
 - 如果目标语言比中文更长，允许换行、分段、调整行距、适当缩小字号。
+- 处理长译文时按固定优先级执行：同义精简 -> 自然换行 -> 调整文字框 -> 适度缩小字号；任一步都不得损失核心含义或可读性。
 - 字号不能小到难以阅读。
-- 不能横向拉伸、纵向压扁、倾斜变形来硬塞文字。
+- 不能横向压缩/拉伸字形、纵向压扁/拉长字形、把字距挤到粘连、倾斜变形、重叠或裁切来硬塞文字。
 - 空间不足时，只能在同一原文含义内压缩表达，不能补充新卖点、新解释、新参数。
 - 必须保留原图已经写出的核心卖点、关键信息、卖点数量、重要参数、规格、数量、尺寸。
 - 不允许把关键卖点直接删没。
@@ -147,6 +160,7 @@ Make icon labels clearer...
 禁止：
 
 - 改变商品本体。
+- 改变商品纵横比、轮廓、厚薄、长宽关系、部件比例或透视；禁止通过非等比拉伸商品填满目标比例。
 - 改变主要构图。
 - 改变图标含义。
 - 改变卖点区域。
