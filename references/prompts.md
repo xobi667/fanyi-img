@@ -21,27 +21,35 @@ Exactly these text blocks, no other text, no watermark.
 
 ## 用户要求统一时：批量视觉系统锁
 
-只有用户明确要求“统一 / 统一排版 / 同一套风格 / 系列感 / 保持一致”时启用。开始第一张生图前，先从整批源图建立并冻结一份共享规范：
+只有用户语义明确要求整批视觉、排版或系列风格统一时启用。单独出现“保持一致”不能自动触发；语义不清时先询问。开始第一张生图前，从整批源图建立规范并保存到 `RAW_OUTPUT_DIR/batch_style_lock.json`：
 
-```text
-BATCH_STYLE_LOCK:
-All images in this batch belong to one coherent product-image series.
-Use one shared visual system across the batch:
-- exact canvas size and aspect ratio
-- font family/style and weight
-- title/body hierarchy and size ranges
-- text alignment and text-box zones
-- outer margins, spacing and line spacing
-- color palette
-- badge/icon/label style
-- natural product display scale range
-
-Apply this same visual system to every image in the batch.
-Do not independently redesign each image.
-Preserve each source image's own information structure and text-block count.
-Share only visual rules; never share products, source text, translations,
-parameters, layout content, or conversation images between tasks.
+```json
+{
+  "version": 1,
+  "canvas": {"ratio": "用户确认值", "width": 0, "height": 0},
+  "typography": {
+    "family_style": "共同字体视觉风格",
+    "title_weight": "共同标题字重",
+    "title_size_range": "共同标题字号范围",
+    "body_size_range": "共同正文字号范围",
+    "alignment": "共同对齐方式",
+    "line_spacing": "共同行距范围"
+  },
+  "layout": {
+    "title_zone": "共同标题区域",
+    "body_zone": "共同正文区域",
+    "outer_margin": "共同外边距范围",
+    "module_spacing": "共同模块间距范围"
+  },
+  "palette": ["共同主色", "共同辅助色", "共同背景色"],
+  "label_style": "共同图标、标签和徽章风格",
+  "product_scale_range": "商品占画布的自然视觉尺度范围",
+  "reference_source": "用于提炼抽象风格的代表图相对路径或 null",
+  "content_isolation": true
+}
 ```
+
+把 `width`、`height` 和所有描述性占位值替换为本批确认后的真实值，使用 UTF-8 写入并原子替换目标文件。`content_isolation` 必须保持为 `true`。不得在 JSON 中保存任何单图译文、参数、商品内容或会话图片。
 
 每张图的简短 prompt 还必须加入：
 
@@ -59,6 +67,8 @@ own information structure. Do not create a new layout style for this image.
 - 不得把上一张图的文字、参数、商品、图标或卖点带入下一张。
 - 不得为了统一而新增/删除文字块、改变商品结构或强行套模板。
 - 多 worker 时由主协调者生成一次 `BATCH_STYLE_LOCK` 并原样下发；worker 不得自行改写规范。
+- prompt 中只摘录当前任务需要的锁定字段；风格锁原件以 `batch_style_lock.json` 为准。
+- 可用一张代表图建立抽象视觉基准，但不得把代表图的商品、文字、参数或会话图片共享给其他任务。纯提示词只能追求稳定的视觉近似，不能宣称字体像素级完全一致。
 - 用户没有明确要求统一时，不强制套批量版式，优先忠实保留各源图版式。
 
 ## 强制总模板
