@@ -19,6 +19,48 @@ Exactly these text blocks, no other text, no watermark.
 - 一个请求只生成一个 task_id；不同图片不得共用 prompt 或会话图片。
 - 生成成功后立即把 Codex 返回文件复制到该任务的原始生图输出路径，并保留生成器原文件。
 
+## 用户要求统一时：批量视觉系统锁
+
+只有用户明确要求“统一 / 统一排版 / 同一套风格 / 系列感 / 保持一致”时启用。开始第一张生图前，先从整批源图建立并冻结一份共享规范：
+
+```text
+BATCH_STYLE_LOCK:
+All images in this batch belong to one coherent product-image series.
+Use one shared visual system across the batch:
+- exact canvas size and aspect ratio
+- font family/style and weight
+- title/body hierarchy and size ranges
+- text alignment and text-box zones
+- outer margins, spacing and line spacing
+- color palette
+- badge/icon/label style
+- natural product display scale range
+
+Apply this same visual system to every image in the batch.
+Do not independently redesign each image.
+Preserve each source image's own information structure and text-block count.
+Share only visual rules; never share products, source text, translations,
+parameters, layout content, or conversation images between tasks.
+```
+
+每张图的简短 prompt 还必须加入：
+
+```text
+Use the frozen BATCH_STYLE_LOCK for this batch. Keep typography, hierarchy,
+alignment, margins, spacing, color palette, label style, and natural product
+display scale consistent with the other images. Preserve this source image's
+own information structure. Do not create a new layout style for this image.
+```
+
+强制边界：
+
+- “统一”是统一视觉语言，不是让所有图片拥有相同文案、相同商品或完全相同构图。
+- 每张图仍使用独立文字锁、商品几何锁和 task_id。
+- 不得把上一张图的文字、参数、商品、图标或卖点带入下一张。
+- 不得为了统一而新增/删除文字块、改变商品结构或强行套模板。
+- 多 worker 时由主协调者生成一次 `BATCH_STYLE_LOCK` 并原样下发；worker 不得自行改写规范。
+- 用户没有明确要求统一时，不强制套批量版式，优先忠实保留各源图版式。
+
 ## 强制总模板
 
 以下是约束全集，用于组装当前图片的简短 prompt，不要整段原样提交。每张图生成时必须体现目标语言、构图、可见文字锁和“严禁新增文字”。
