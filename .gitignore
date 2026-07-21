@@ -1,28 +1,11 @@
 __pycache__/
+.xobi-img-staging/
 .fanyi-staging/
+xobi-img-output/
 *.py[cod]
 
 .DS_Store
 Thumbs.db
 
 generated_images/
-*-英语/
-*-英语-原始生图/
-*-泰语/
-*-泰语-原始生图/
-*-印尼语/
-*-印尼语-原始生图/
-*-越南语/
-*-越南语-原始生图/
-*-马来语/
-*-马来语-原始生图/
-*-西班牙语/
-*-西班牙语-原始生图/
-*-阿拉伯语/
-*-阿拉伯语-原始生图/
-
-fanyi_report.txt
-fanyi_failed.txt
-fanyi_preflight_report.txt
-fanyi_optimize_report.txt
-fanyi_optimize_failed.txt
+xobi_img_*report*.md

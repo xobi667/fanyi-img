@@ -3,12 +3,30 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError
 
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
+
+
+def load_label_font(size: int = 18) -> tuple[ImageFont.ImageFont, bool]:
+    candidates = [
+        Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "msyh.ttc",
+        Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "simhei.ttf",
+        Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+        Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
+        Path("/System/Library/Fonts/PingFang.ttc"),
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            try:
+                return ImageFont.truetype(str(candidate), size=size), True
+            except OSError:
+                continue
+    return ImageFont.load_default(), False
 
 
 def iter_images(root: Path, output: Path) -> list[Path]:
@@ -46,7 +64,7 @@ def main() -> int:
     rows = math.ceil(len(images) / args.columns)
     sheet = Image.new("RGB", (cell_width * args.columns, cell_height * rows), "white")
     draw = ImageDraw.Draw(sheet)
-    font = ImageFont.load_default()
+    font, cjk_labels = load_label_font()
 
     loaded = 0
     for index, path in enumerate(images):
@@ -63,6 +81,8 @@ def main() -> int:
         label = str(path.relative_to(root)).replace("\\", "/")
         if len(label) > 46:
             label = "..." + label[-43:]
+        if not cjk_labels:
+            label = f"image-{index + 1:04d} {path.suffix.lower()}"
         draw.text((column * cell_width + padding, row * cell_height + padding + args.thumb + 8), label, fill="black", font=font)
         loaded += 1
 
