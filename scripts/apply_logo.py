@@ -75,7 +75,7 @@ def main() -> int:
     parser.add_argument("--logo", type=Path, default=DEFAULT_LOGO)
     parser.add_argument("--reference-short-side", type=int, default=4000)
     parser.add_argument("--alpha-threshold", type=int, default=10)
-    parser.add_argument("--safe-padding", type=int, default=16)
+    parser.add_argument("--safe-padding", type=int, default=80, help="Safe padding in 4000px reference-template coordinates. Default: 80 (16px on an 800px short side).")
     parser.add_argument("--safe-zone-approved", action="store_true", help="Confirm visual review found no text/product/important content in the printed safe zone.")
     parser.add_argument("--dry-run", action="store_true", help="Print scaled logo and safe-zone geometry without writing output.")
     parser.add_argument("--min-kb", type=int, help="Optional JPEG minimum size.")
@@ -108,8 +108,10 @@ def main() -> int:
         with Image.open(source) as raw:
             base = ImageOps.exif_transpose(raw).convert("RGBA")
         overlay = scaled_overlay(logo, base.size, args.reference_short_side)
-        zone = safe_zone(overlay, args.safe_padding, args.alpha_threshold)
-        print(f"source={source} canvas={base.width}x{base.height} logo_canvas={overlay.width}x{overlay.height} safe_zone={zone[0]},{zone[1]},{zone[2]},{zone[3]}")
+        scale = min(base.size) / args.reference_short_side
+        scaled_padding = max(0, round(args.safe_padding * scale))
+        zone = safe_zone(overlay, scaled_padding, args.alpha_threshold)
+        print(f"source={source} canvas={base.width}x{base.height} scale={scale:.6f} logo_canvas={overlay.width}x{overlay.height} safe_padding={scaled_padding} safe_zone={zone[0]},{zone[1]},{zone[2]},{zone[3]}")
         if args.dry_run:
             continue
         output = output_path if input_path.is_file() else output_path / source.relative_to(root)

@@ -55,12 +55,13 @@
 
 ### 添加 Logo
 
-1. 先确定最终画布尺寸，运行 Logo 脚本 dry-run 获取 safe_zone。
-2. 查看底图，逐项判断文字、产品、Logo 以外的重要内容是否进入 safe_zone。
-3. 有冲突时先生成无 Logo 新底图：保留原有全部文字和内容，只重新安排冲突区域，效果应类似把顶部标题移到 Logo 右侧，而不是删除标题或直接覆盖。
-4. 再次查看底图，确认 safe_zone 为空。
-5. 使用真实模板确定性叠加 Logo；禁止 AI 生成 Logo。
-6. 查看最终图，确认 Logo 完整、大小和位置一致，且没有遮挡任何文字或产品。
+1. 先确定最终画布尺寸。所有比例按短边归一化：`scale = min(width, height) / 4000`，Logo 模板及其内部位置、安全边距统一乘此 scale，并锚定左上角 `(0,0)`。
+2. 对每张最终画布分别运行 Logo 脚本 dry-run 获取 safe_zone；1:1 的坐标不能复用到 16:9、9:16 或其他尺寸。
+3. 查看底图，逐项判断文字、产品、Logo 以外的重要内容是否进入 safe_zone。
+4. 有冲突时先生成无 Logo 新底图：保留原有全部文字和内容，只重新安排冲突区域，效果应类似把顶部标题移到 Logo 右侧，而不是删除标题或直接覆盖。
+5. 再次查看底图，确认 safe_zone 为空。
+6. 使用真实模板确定性叠加 Logo；禁止 AI 生成 Logo。
+7. 查看最终图，确认 Logo 完整、大小和位置一致，且没有遮挡任何文字或产品。
 
 800×800 默认可先运行：
 
@@ -68,6 +69,8 @@
 python scripts/apply_logo.py --input <无Logo底图> --output <最终图> --dry-run
 python scripts/apply_logo.py --input <无Logo底图> --output <最终图> --safe-zone-approved
 ```
+
+例如短边为 800 时 scale=0.2；短边为 900 的 1600×900 或 900×1600 图片时 scale=0.225。横竖画布只改变可用空间，不改变 Logo 纵横比或左上角锚点。
 
 ## localization
 
