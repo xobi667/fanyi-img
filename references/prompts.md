@@ -50,8 +50,14 @@ PRODUCT GEOMETRY LOCK: Preserve the product's natural aspect ratio, silhouette, 
 - 删除对象：描述删除后的合理补全，并锁定其余区域。
 - 替换对象：明确位置、尺度、透视、光线和接触阴影。
 - 换背景：锁定前景轮廓和材质，使背景光线、色温和景深匹配。
-- Logo：用户未授权时保持；授权添加时明确来源、位置、尺度和禁止变形。
+- Logo：AI 只生成无 Logo 底图，并为脚本给出的左上角 safe_zone 留出完全空白的背景区域。若原文字位于该区域，必须把完整文字自然移到 Logo 右侧或下方，不能删除、缩小到不可读或覆盖。真实 Logo 由 `apply_logo.py` 最后叠加，prompt 中禁止要求 AI 绘制 Logo。
 - 合成：逐张声明只抽取的元素，禁止携带无关主体和文字。
+
+Logo 冲突重排 prompt 必须加入：
+
+```text
+TOP-LEFT LOGO SAFE ZONE: Keep rectangle {SAFE_ZONE_PIXELS} completely free of all text, products, icons, badges, and important visual content. Preserve every original text block exactly, but naturally reposition any conflicting top text to the right of or below this reserved area. Do not draw, imitate, spell, or include the logo itself; the exact logo will be overlaid later from the original asset.
+```
 
 ## 透明背景
 

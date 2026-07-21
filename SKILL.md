@@ -52,6 +52,16 @@ description: 跨 Codex、OpenClaw 与 AgentSkills 兼容宿主的通用位图生
 - 无文字源图默认保持完全无字；不能根据文件名、商品外观或目录名创造文案。
 - 用户未授权修改 Logo、型号、数量、尺寸、单位和品牌时必须保持。
 
+## 死命令：Logo 先留位、最后确定性叠加
+
+- 默认 Logo 资产是 `assets/we-film-logo-template.png`。这是用户已调整好位置和大小的 4000×4000 透明模板，禁止 AI 重绘、仿制、改字、改色或变形。
+- 需要添加 Logo 时，先对最终尺寸运行 `scripts/apply_logo.py --dry-run`，取得左上角 `safe_zone`。该矩形是 Logo 禁占区，文字、产品和重要信息都不得进入。
+- 查看源图或无 Logo 底图。如果任何文字、产品或重要内容进入 safe_zone，禁止直接盖 Logo；必须先重新生图/编辑底图，把冲突内容自然移动到禁占区之外，同时保留全部原文和信息。
+- 底图生成后必须视觉确认 safe_zone 完全无文字、无产品、无重要信息，再运行 `apply_logo.py --safe-zone-approved` 叠加真实 Logo。
+- Logo 叠加是最后的确定性视觉步骤；之后禁止再次交给 AI。允许继续做不改变像素布局的编码/体积控制。
+- 同一批使用同一模板、同一 reference-short-side、同一透明度阈值和安全边距。以最终画布短边等比缩放，禁止非等比缩放。
+- 无法在不丢失信息的情况下清空 safe_zone 时必须继续重排/重生或报告失败，绝不允许 Logo 挡住文字。
+
 ## localization 专属规则
 
 - 组装提示词前读取 `references/glossary.md`。
@@ -78,6 +88,7 @@ description: 跨 Codex、OpenClaw 与 AgentSkills 兼容宿主的通用位图生
 - `scripts/update_manifest.py`：原子更新单个任务状态并重新生成 report。
 - `scripts/optimize_images.py`：按明确规格做离线尺寸、画布、JPG 和体积优化。
 - `scripts/create_contact_sheet.py`：生成批量联系表。
+- `scripts/apply_logo.py`：计算左上角 Logo 禁占区，并在视觉批准后确定性叠加真实 Logo。
 - `scripts/install_skill.py`：安装到 Codex 或 OpenClaw，支持自动检测。
 
 ## 执行顺序

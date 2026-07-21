@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 SKILL_NAME = "xobi-img"
-COPY_DIRS = ("references", "scripts")
+COPY_DIRS = ("references", "scripts", "assets")
 
 
 def codex_root() -> Path:
