@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -69,6 +70,38 @@ def fit(image: Image.Image, min_bytes: int, max_bytes: int) -> bytes:
     return best
 
 
+def is_inside(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def allocate_outputs(sources: list[Path], input_dir: Path, output_dir: Path) -> dict[Path, Path]:
+    groups: dict[str, list[Path]] = {}
+    for source in sources:
+        relative = source.relative_to(input_dir).with_suffix(".jpg")
+        key = os.path.normcase(relative.as_posix()).casefold()
+        groups.setdefault(key, []).append(source)
+    allocated: dict[Path, Path] = {}
+    used: set[str] = set()
+    for key in sorted(groups):
+        group = sorted(groups[key], key=lambda path: path.suffix.lower() not in {".jpg", ".jpeg"})
+        for source in group:
+            relative = source.relative_to(input_dir).with_suffix(".jpg")
+            output_key = os.path.normcase(relative.as_posix()).casefold()
+            if output_key in used:
+                suffix = source.suffix.lower().lstrip(".") or "source"
+                relative = relative.with_name(f"{relative.stem}-{suffix}.jpg")
+                output_key = os.path.normcase(relative.as_posix()).casefold()
+            if output_key in used:
+                raise ValueError(f"could not allocate a unique output for {source}")
+            used.add(output_key)
+            allocated[source] = output_dir / relative
+    return allocated
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Deterministic xobi-img canvas/JPEG optimizer.")
     parser.add_argument("--input", required=True, type=Path)
@@ -98,8 +131,19 @@ def main() -> int:
         parser.error("input must be a directory and differ from output")
     output_dir.mkdir(parents=True, exist_ok=True)
     results: list[Result] = []
-    for source in sorted(p for p in input_dir.rglob("*") if p.is_file() and p.suffix.lower() in IMAGE_EXTS):
-        output = (output_dir / source.relative_to(input_dir)).with_suffix(".jpg")
+    sources = [
+        path for path in sorted(input_dir.rglob("*"))
+        if path.is_file()
+        and path.suffix.lower() in IMAGE_EXTS
+        and ".xobi" not in {part.casefold() for part in path.relative_to(input_dir).parts}
+        and not (is_inside(output_dir, input_dir) and is_inside(path, output_dir))
+    ]
+    try:
+        outputs = allocate_outputs(sources, input_dir, output_dir)
+    except ValueError as exc:
+        parser.error(str(exc))
+    for source in sources:
+        output = outputs[source]
         if output.exists() and not args.overwrite:
             results.append(Result("skipped", source, output, source.stat().st_size, output.stat().st_size))
             continue

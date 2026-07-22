@@ -1,0 +1,4 @@
+interface:
+  display_name: "xobi-img"
+  short_description: "通用图片生成、严格翻译、编辑、Logo 与四路批处理"
+  default_prompt: "使用 $xobi-img 在确认修改内容与输出比例后严格处理这些图片。"
