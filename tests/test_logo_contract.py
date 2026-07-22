@@ -91,6 +91,11 @@ class LogoManifestContractTests(unittest.TestCase):
         moved: bool = True,
         anchor_case: str = "valid",
         delete_unrelated_product: bool = False,
+        register_base: bool = True,
+        freeze_plan: bool = True,
+        freeze_geometry: bool = True,
+        freeze_reference: bool = True,
+        declare_conflicts: bool = True,
     ) -> dict[str, object]:
         target = self.input_dir / "target.png"
         source = Image.new("RGB", (400, 400), (236, 232, 220))
@@ -118,11 +123,23 @@ class LogoManifestContractTests(unittest.TestCase):
         )
         item = manifest["items"][0]
         work_dir = manifest_path.parent / "work"
+        conflict_reference = work_dir / "conflict-reference.png"
+        source.save(conflict_reference)
+        if register_base:
+            self.run_cli(
+                UPDATE,
+                "--manifest", manifest_path,
+                "--task-id", item["task_id"],
+                "--worker-id", item["worker_id"],
+                "--status", "pending",
+                "--attempts", 1,
+                "--base-output", conflict_reference,
+            )
         geometry_path = work_dir / "logo_geometry.json"
         output = Path(str(item["output"]))
         self.run_cli(
             APPLY_LOGO,
-            "--input", target,
+            "--input", conflict_reference,
             "--output", output,
             "--logo", logo,
             "--dry-run",
@@ -184,7 +201,7 @@ class LogoManifestContractTests(unittest.TestCase):
                     "bbox": [4, 4, 60, 24],
                     "members": ["headline"],
                 }],
-                "conflicts": ["module-01"],
+                "conflicts": ["module-01"] if declare_conflicts else [],
                 "decision": "regenerate_for_conflict",
                 "module_anchors": anchors,
                 "family_reference": item["task_id"],
@@ -217,15 +234,34 @@ class LogoManifestContractTests(unittest.TestCase):
         self.write_json(families_path, families)
         anchors_path = work_dir / "module_anchors.json"
         self.write_json(anchors_path, anchors)
+        freeze_arguments: list[object] = [
+            "--manifest", manifest_path,
+            "--task-id", item["task_id"],
+            "--worker-id", item["worker_id"],
+            "--status", "pending",
+            "--base-output", conflict_reference,
+            "--logo-decision", "regenerate_for_conflict",
+            "--module-anchors-json", anchors_path,
+            "--family-id", "family-01",
+        ]
+        if freeze_reference:
+            freeze_arguments.extend(("--conflict-reference-base", conflict_reference))
+        if freeze_plan:
+            freeze_arguments.extend(("--logo-plan-file", plan_path))
+        if freeze_geometry:
+            freeze_arguments.extend(("--logo-geometry-json", geometry_path))
+        self.run_cli(UPDATE, *freeze_arguments, check=freeze_reference)
         return {
             "manifest_path": manifest_path,
             "manifest": manifest,
             "item": item,
+            "conflict_reference": conflict_reference,
             "prepared": prepared,
             "geometry_path": geometry_path,
             "plan_path": plan_path,
             "families_path": families_path,
             "anchors_path": anchors_path,
+            "conflict_attempt": 2 if register_base else 1,
         }
 
     def update_regenerate_pilot(
@@ -241,14 +277,10 @@ class LogoManifestContractTests(unittest.TestCase):
             "--task-id", item["task_id"],
             "--worker-id", item["worker_id"],
             "--status", "success",
-            "--attempts", 1,
-            "--logo-plan-file", fixture["plan_path"],
+            "--attempts", fixture["conflict_attempt"],
+            "--attempt-stage", "logo_conflict",
             "--layout-families-file", fixture["families_path"],
-            "--logo-decision", "regenerate_for_conflict",
-            "--logo-geometry-json", fixture["geometry_path"],
-            "--module-anchors-json", fixture["anchors_path"],
             "--prepared-base", fixture["prepared"],
-            "--family-id", "family-01",
             check=check,
         )
 
@@ -272,6 +304,49 @@ class LogoManifestContractTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(0, verified.returncode, verified.stdout)
+
+    def test_logo_conflict_gate_rejects_missing_or_unproven_prerequisites(self) -> None:
+        cases = (
+            ("accepted base", {"register_base": False}, "accepted no-reference pure-generation base"),
+            ("logo plan", {"freeze_plan": False}, "frozen logo_plan"),
+            ("geometry", {"freeze_geometry": False}, "frozen logo geometry"),
+            ("reference", {"freeze_reference": False}, "conflict_reference_base"),
+            ("real conflicts", {"declare_conflicts": False}, "real non-empty conflicts"),
+        )
+        for label, options, expected_error in cases:
+            with self.subTest(label=label):
+                fixture = self.build_regenerate_pilot(**options)
+                completed = self.update_regenerate_pilot(fixture, check=False)
+                self.assertNotEqual(0, completed.returncode)
+                self.assertIn(expected_error, completed.stderr)
+
+    def test_logo_conflict_gate_rejects_manifest_without_logo(self) -> None:
+        target = self.input_dir / "no-logo-target.png"
+        Image.new("RGB", (128, 128), (30, 90, 160)).save(target)
+        manifest_path, manifest = self.manifest_from_preflight(
+            "--input", target,
+            "--mode", "edit",
+            "--operation", "edit without Logo",
+            "--ratio", "original",
+            "--workers", 1,
+            "--output-root", self.output_root,
+            "--task-name", "no-logo-conflict",
+        )
+        item = manifest["items"][0]
+
+        rejected = self.run_cli(
+            UPDATE,
+            "--manifest", manifest_path,
+            "--task-id", item["task_id"],
+            "--worker-id", item["worker_id"],
+            "--status", "pending",
+            "--attempts", 1,
+            "--attempt-stage", "logo_conflict",
+            check=False,
+        )
+
+        self.assertNotEqual(0, rejected.returncode)
+        self.assertIn("active Logo", rejected.stderr)
 
     def test_regenerate_rejects_valid_move_that_deletes_unrelated_product(self) -> None:
         fixture = self.build_regenerate_pilot(delete_unrelated_product=True)
@@ -417,18 +492,47 @@ class LogoManifestContractTests(unittest.TestCase):
         plan_path = work_dir / "logo_plan.json"
         self.write_json(plan_path, plan)
 
+        self.run_cli(
+            UPDATE,
+            "--manifest", manifest_path,
+            "--task-id", item["task_id"],
+            "--worker-id", item["worker_id"],
+            "--status", "pending",
+            "--attempts", 1,
+            "--base-output", prepared,
+        )
+        self.run_cli(
+            UPDATE,
+            "--manifest", manifest_path,
+            "--task-id", item["task_id"],
+            "--worker-id", item["worker_id"],
+            "--status", "pending",
+            "--logo-plan-file", plan_path,
+            "--logo-decision", "direct_overlay",
+            "--logo-geometry-json", geometry_path,
+            "--prepared-base", prepared,
+            "--family-id", "ungrouped",
+        )
+        forbidden_conflict = self.run_cli(
+            UPDATE,
+            "--manifest", manifest_path,
+            "--task-id", item["task_id"],
+            "--worker-id", item["worker_id"],
+            "--status", "pending",
+            "--attempts", 2,
+            "--attempt-stage", "logo_conflict",
+            check=False,
+        )
+        self.assertNotEqual(0, forbidden_conflict.returncode)
+        self.assertIn("regenerate_for_conflict", forbidden_conflict.stderr)
+
         completed = self.run_cli(
             UPDATE,
             "--manifest", manifest_path,
             "--task-id", item["task_id"],
             "--worker-id", item["worker_id"],
             "--status", "success",
-            "--attempts", 1,
-            "--logo-plan-file", plan_path,
-            "--logo-decision", "direct_overlay",
-            "--logo-geometry-json", geometry_path,
-            "--prepared-base", prepared,
-            "--family-id", "ungrouped",
+            "--attempts", 2,
             check=False,
         )
 
@@ -523,20 +627,39 @@ class LogoManifestContractTests(unittest.TestCase):
         logo_plan_path = work_dir / "logo-plan.json"
         self.write_json(logo_plan_path, logo_plan)
 
+        self.run_cli(
+            UPDATE,
+            "--manifest", manifest_path,
+            "--task-id", item["task_id"],
+            "--worker-id", item["worker_id"],
+            "--status", "pending",
+            "--attempts", 1,
+            "--base-output", conflict_reference,
+        )
+        self.run_cli(
+            UPDATE,
+            "--manifest", manifest_path,
+            "--task-id", item["task_id"],
+            "--worker-id", item["worker_id"],
+            "--status", "pending",
+            "--base-output", conflict_reference,
+            "--conflict-reference-base", conflict_reference,
+            "--logo-plan-file", logo_plan_path,
+            "--logo-decision", "regenerate_for_conflict",
+            "--logo-geometry-json", preliminary_path,
+            "--module-anchors-json", anchors_path,
+            "--family-id", "ungrouped",
+        )
+
         completed = self.run_cli(
             UPDATE,
             "--manifest", manifest_path,
             "--task-id", item["task_id"],
             "--worker-id", item["worker_id"],
             "--status", "success",
-            "--attempts", 1,
-            "--conflict-reference-base", conflict_reference,
+            "--attempts", 2,
+            "--attempt-stage", "logo_conflict",
             "--prepared-base", prepared,
-            "--logo-plan-file", logo_plan_path,
-            "--logo-decision", "regenerate_for_conflict",
-            "--logo-geometry-json", geometry_path,
-            "--module-anchors-json", anchors_path,
-            "--family-id", "ungrouped",
             check=False,
         )
 
@@ -569,7 +692,7 @@ class LogoManifestContractTests(unittest.TestCase):
         source_image.save(localized)
         localization_plan = {
             "task_id": item["task_id"],
-            "mode": "text_only_reference_edit",
+            "mode": "pure_generation_localization",
             "source": item["source"],
             "source_sha256": item["source_sha256"],
             "source_size": [400, 400],
@@ -594,7 +717,6 @@ class LogoManifestContractTests(unittest.TestCase):
                 {"id": "red-badge", "kind": "element", "scope": "region", "bbox": [4, 4, 61, 25]},
                 {"id": "background", "kind": "background_surface", "scope": "canvas", "bbox": None},
             ],
-            "pure_rebuild_allowed": False,
         }
         localization_plan_path = work_dir / "localization-plan.json"
         self.write_json(localization_plan_path, localization_plan)
@@ -612,16 +734,7 @@ class LogoManifestContractTests(unittest.TestCase):
         raw_candidate_draw.rectangle((258, 27, 300, 30), fill=(25, 25, 25))
         raw_candidate_draw.rectangle((263, 34, 294, 37), fill=(25, 25, 25))
         raw_candidate_image.save(raw_candidate)
-        composition = work_dir / "localization-composition.json"
-        self.run_cli(
-            COMPOSE_LOCALIZATION,
-            "--source", item["source"],
-            "--candidate", raw_candidate,
-            "--output", localized,
-            "--plan", localization_plan_path,
-            "--provenance-json", composition,
-            "--overwrite",
-        )
+        raw_candidate_image.save(localized)
         self.run_cli(
             UPDATE,
             "--manifest", manifest_path,
@@ -629,7 +742,8 @@ class LogoManifestContractTests(unittest.TestCase):
             "--worker-id", item["worker_id"],
             "--status", "pending",
             "--attempts", 1,
-            "--attempt-stage", "reference_edit",
+            "--attempt-stage", "pure_generation",
+            "--localized-base", localized,
         )
         conflict_reference = work_dir / "conflict-reference.png"
         self.run_cli(
@@ -709,30 +823,35 @@ class LogoManifestContractTests(unittest.TestCase):
         }
         logo_plan_path = work_dir / "logo-plan.json"
         self.write_json(logo_plan_path, logo_plan)
-        common = [
+        freeze_common = [
+            "--manifest", manifest_path,
+            "--task-id", item["task_id"],
+            "--worker-id", item["worker_id"],
+            "--status", "pending",
+            "--logo-plan-file", logo_plan_path,
+            "--logo-decision", "regenerate_for_conflict",
+            "--logo-geometry-json", preliminary_geometry,
+            "--module-anchors-json", anchors_path,
+            "--family-id", "ungrouped",
+        ]
+        missing_reference = self.run_cli(UPDATE, *freeze_common, check=False)
+        self.assertNotEqual(0, missing_reference.returncode)
+        self.assertIn("requires conflict_reference_base", missing_reference.stderr)
+
+        self.run_cli(
+            UPDATE,
+            *freeze_common,
+            "--conflict-reference-base", conflict_reference,
+        )
+        accepted = self.run_cli(
+            UPDATE,
             "--manifest", manifest_path,
             "--task-id", item["task_id"],
             "--worker-id", item["worker_id"],
             "--status", "success",
             "--attempts", 2,
             "--attempt-stage", "logo_conflict",
-            "--localized-base", localized,
-            "--localization-composition-json", composition,
             "--prepared-base", prepared,
-            "--logo-plan-file", logo_plan_path,
-            "--logo-decision", "regenerate_for_conflict",
-            "--logo-geometry-json", geometry_path,
-            "--module-anchors-json", anchors_path,
-            "--family-id", "ungrouped",
-        ]
-        missing_reference = self.run_cli(UPDATE, *common, check=False)
-        self.assertNotEqual(0, missing_reference.returncode)
-        self.assertIn("requires conflict_reference_base", missing_reference.stderr)
-
-        accepted = self.run_cli(
-            UPDATE,
-            *common,
-            "--conflict-reference-base", conflict_reference,
             check=False,
         )
         self.assertEqual(0, accepted.returncode, accepted.stderr)

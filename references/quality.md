@@ -2,6 +2,7 @@
 
 ## 单图通用
 
+- 除 Logo 冲突底图专属流程外，原生图片调用是无参考图的纯生图；调用记录没有 target/reference/最近会话图片输入。通过验收的完整候选直接成为成品视觉内容，不经过本地蒙版、裁贴或局部合成。
 - 用户点名的变化已完成；未点名区域保持。
 - 主体完整，无多余部件、畸变、错误透视、异常阴影或反射。
 - 比例、精确尺寸、格式和透明通道符合本次要求。
@@ -11,19 +12,19 @@
 
 ## localization
 
-逐图 source/raw_edit_candidate/localized_base/final 并排检查；`raw_edit_candidate` 是不可交付的图片工具候选，reference-edit 的 `localized_base` 是通过 `compose_localization.py` 只合入计划文字框的无损 PNG，`final` 是验收后的交付文件。只有同尺寸 PNG 且没有 Logo 时，localized_base 与 final 才可以是同一路径：
+逐图并排检查 `source/pure_generation_candidate/final`。默认翻译没有 reference-edit、文字框本地合成或像素回填阶段；图片模型返回的是完整纯生图候选，通过全部验收后该候选本身才可成为 final 的视觉内容：
 
-- `source -> localized_base` 只有 plan 中 `(source_bbox ∪ target_bbox) - protected_non_text_regions` 的像素允许变化；保护区及框外解码 RGBA 像素必须逐像素相同。商品、全部照片、人物、图标、Logo、徽章、边框、色块、背景、阴影、纹理、数量、顺序和相互关系均未漂移。`non_text_inventory` 必须使用结构化 element bbox；所有与当前文字框相交的 element 都必须由同 ID 保护区完整覆盖交集，只有 `background_surface/canvas/null` 可免保护。字符串旧格式、漏报、缩小保护区、目标框侵入或候选返回后补报均失败。单框超过画布 20%、全部文字框 union 超过 60%、任何保护区/框外变化或缺少可重算映射的 ratio adaptation 都必须 fail closed。整图 `size_resample` 只允许发生在 localized_base 验收之后。
-- 文字框必须贴合真实字形及必要的原背景；每块按 `(source_bbox ∪ target_bbox) - protected_non_text_regions` 的真实可编辑掩膜统计，两个框之间的空白和保护区不计入分母。目标文案不同却没有显著像素变化，或可编辑区内色差达到 8 的有意义变化/色差达到 20 的显著变化超过 85%，均拒绝，防止空跑、整块轻微调色或塞图，同时容忍跨分辨率 LANCZOS 对齐产生的极小插值误差。该像素启发式不等于 OCR，逐字语言、漏译、重复和额外文字仍由视觉验收负责。
-- 硬像素锁和全局构图门禁都必须通过。reference-edit success 还必须登记 composition provenance；update/verify 从锁定的 raw candidate 和 frozen plan 重算 localized_base。删掉一个小图标、轻微全局调色、伪报整画布为文字框、缺少 composition、结果与重算不等价、篡改 provenance、把 raw candidate 直接交付或让 `localized_base -> final/prepared_base` 出现未经登记的变化，均判失败。provenance 证明结果一致性，不把可手写的 producer 字段当作进程身份认证。
-- 当前 task 的 localization plan 必须在 attempts=0 时以独立 pending 更新登记；artifact 路径、SHA-256、manifest/task/source 绑定和 JSON 内容在 update/verify 中一致。success 首次传 plan、候选出来后扩大 bbox、attempt 后修改文件或复制另一 task 的计划登记，均判失败。
-- 保持原比例且未指定不同精确尺寸时，全部非文字位置、间距、构图、裁切、尺度和画布结构完全未变；目标文字只允许 frozen plan 中逐块登记的排版适配。最终格式不是 PNG 时，只允许通过 `scripts/resample_image.py` 以 localized_base 原尺寸做一次确定性编码；相同宽高比的新精确尺寸只允许该脚本完成 `localized_base -> final`，或组合 Logo 任务中的 `localized_base -> prepared_base`，一次整图 LANCZOS 等比确定性重采样，并复核真实编码、透明像素和 ICC。二次 JPEG/WebP 编码或任意另存会因无法重现固定编码而失败。新比例缺少结构化、可重算坐标映射时直接 fail closed，不能用自由文本 allowed_changes 放行。
-- 原文字块与译文一一对应，块数、语义角色、块阅读顺序、层级和颜色保持；`target_bbox` 默认等于 `source_bbox`，只有 plan 记录的长文案扩框或目标语言书写方向/对齐调整存在 `text_layout_adaptation`，且不得碰非文字模块。
-- 逐字检查语言、拼写、标点、数字、币种、型号、数量、尺寸和单位；没有漏译、重复、新增、乱码或伪字。
-- 长译文在 plan 前确定忠实文案，锁定后只做已记录的换行/文字框/字号适配；`user_exact` 与 `requested_target_text` 逐字相同，没有精简、改写、压缩、拉伸、粘连、重叠、裁切或溢出。
-- 结果不得出现重设计、换商品图、删图标、改颜色、改边框、换背景或新增卖点。
+- manifest 中的执行模式必须是 `pure_generation_localization`，`reference_policy=none`。调用记录不得包含源图、参考图、最近会话图片或其他隐式图片输入；候选出来后不得新增、删减或放宽冻结计划。
+- 当前 task 的 localization plan 必须在 attempts=0 时独立登记，绑定 manifest/task/source 路径、SHA-256 和尺寸。逐块原文、译文、角色、顺序、位置和完整 `content_lock` 在第一次图片调用前冻结；另一 task 的计划、译文或构图不得复用。
+- 原文字块与译文一一对应，文字块数量、语义范围、阅读顺序、层级、颜色和模块位置保持。逐字检查语言、拼写、标点、数字、币种、型号、数量、尺寸和单位；没有漏译、重复、新增、乱码或伪字。
+- `user_exact` 必须与 `requested_target_text` 逐 Unicode 字符相同；不得精简、改写、纠错或替换。长译文只能在原文字模块内自然换行、调整字距和适度缩小字号，不能移动或扩大模块、压缩或拉伸字形、粘连、重叠、裁切、溢出或小到不可读。
+- source 与候选中的商品、照片、人物、Logo、图标、徽章、边框、色块、背景、阴影、纹理、装饰、数量、顺序、颜色、轮廓、材质、视角、裁切、尺度、位置、间距、构图、版式和相互关系必须保持；任何可见的重设计、换商品、删图标、全局调色、改边框、换背景、移动模块或新增卖点都失败。
+- 无字区域继续无字；不得增加标语、参数、角标、底板、装饰、水印或伪字。包装/商品本体上的品牌和印刷文字只有用户明确点名才允许翻译。
+- 纯生图无法提供框外像素逐值相同的保证，因此不把像素相等冒充验收结论。可以用 OCR、感知差异、元素检测和接触表辅助发现漂移，但它们只能用于拒绝候选，不能用于本地修补候选。
+- 保持原比例时，画布、裁切和布局必须保持。用户明确新比例时，`allowed_changes` 只能包含 `minimal_canvas_adaptation`、`proportional_subject_scaling` 和 `necessary_text_reflow`，仍不得改变商品形状、背景风格、信息数量和层级；两项要求无法同时满足时必须在开工前确认，不能让失败候选替用户决定。
+- 通过验收的候选可复制、移动、重命名和登记哈希，但不得运行 `compose_localization.py`、本地文字蒙版、局部裁贴、像素回填或二次 AI 编辑。组合 Logo 任务只允许之后进入 [logo.md](logo.md) 的冲突处理和最终确定性 Logo 叠加。
 
-任何非文字锁、构图门禁、确定性合成或 stage derivation 失败都判失败。初次结果后最多 2 次针对性参考编辑重试；仍失败必须先询问用户，不能静默纯重建。
+初次纯生图结果后最多 2 次针对性质量重试，每图共 3 个 `attempt_stage=pure_generation` quality attempts；其冻结计划模式始终是 `pure_generation_localization`。三次仍失败就报告失败；不得登记第 4 次成功，不得切到参考编辑，也不存在“参考编辑失败三次后才授权纯生图”的流程。
 
 ## Logo
 
@@ -65,17 +66,17 @@ python scripts/verify_manifest.py --manifest <任务目录/.xobi/manifest.json>
 ## 四路、重试与降级
 
 - worker 数是 `min(4, 可用槽位, task 数, 宿主并发上限)`；宿主明确不支持并行时直接为 1。
-- 返回可验收候选即计质量 attempt；只有未通过验收才触发重试，每图每个执行阶段初次结果 + 2 次针对性重试，共最多 3 个，不触发全局降级。基础设施失败没有可用候选，不占质量预算。
-- 每次图片调用必须连续登记唯一 attempt；验收通过的候选也占用当前阶段质量预算，禁止 0 次成功、重复、跳号、漏记或在三次失败后登记第 4 次成功。翻译候选后还需 AI Logo 冲突重排时，先登记 pending 的已接受翻译候选，再用下一 attempt 登记 `logo_conflict`；确定性后处理不增加图片 attempt。
-- Localization 只有当前 task 已记录 3 次 `attempt_stage=reference_edit` 质量失败，且 item 授权绑定本次 `manifest_id + task_id + source_sha256 + 第三次失败记录` 后，才可切到纯重建；一张图的授权不得扩散到同批其他图或新任务。纯重建 success 必须显式记录 `localization_execution_stage=pure_rebuild`，不得声称走过 bbox composition；只写 approval 不会放松 reference-edit 像素锁。切换后另开独立的初次 + 2 次 `attempt_stage=pure_rebuild` 质量预算，两阶段都不得无限重试。
+- 图片工具只要返回任何可读取候选就计质量 attempt，不以“最终可验收”为计数前提；只有候选未通过验收才触发重试，每图每个执行阶段初次结果 + 2 次针对性重试，共最多 3 个，不触发全局降级。基础设施失败没有可读取候选，不占质量预算。
+- Localization 的图片调用必须连续登记唯一 attempt；验收通过的候选也占用当前阶段质量预算，禁止 0 次成功、重复、跳号、漏记或在三次失败后登记第 4 次成功。翻译计划模式始终是 `pure_generation_localization`，普通翻译调用阶段是 `pure_generation`。普通 generate/edit 的第一阶段由 manifest `image_model_policy` 锁定无参考纯生图，不使用 localization stage；任何模式进入真实 Logo 冲突时，都必须已有 active Logo、冻结的冲突 plan/geometry/decision、已接受前序 base 与绑定的 `conflict_reference_base`，再用后续唯一 attempt 登记 `logo_conflict`。无 Logo、direct_overlay、无冲突或首次 attempt 拒绝。最终确定性 Logo 叠加不增加图片 attempt。
+- 新 localization 不接受 `attempt_stage=reference_edit`、`pure_rebuild_approval` 或 `localization_execution_stage=pure_rebuild`。这些字段仅可出现在 v1-v3 旧 manifest 的只读兼容验证中；旧 manifest 不能新增 update/attempt，继续执行前必须迁移到当前纯生图策略。
 - 基础设施问题：没有可用候选的限流、连接、附件或落盘错误，初次调用后最多重试 3 次，依次等待 2/5/10 秒，每个执行阶段总计最多 4 个 infrastructure attempts。混合质量/基础设施失败分别计数；每次图片调用只归入一个结果类别，并保留不归零的总调用序号。
-- 两个 worker 出现同类基础设施错误：取消尚未执行的并行退避重试，停止派发新 task，选择最早的受影响 pending task，以该 task 的原始参考图、prompt 和隔离输出做一次单路探针。探针失败计入该 task 的 infrastructure budget；探针成功产生的候选计入该阶段 quality budget并正常验收，然后降为 1 路补 pending。不得创建无 task 归属的探针。
+- 两个 worker 出现同类基础设施错误：取消尚未执行的并行退避重试，停止派发新 task，选择最早的受影响 pending task，以该 task 的冻结 prompt、无参考输入策略和隔离输出做一次单路探针；只有 `logo_conflict` 探针沿用其唯一底图参考。探针失败计入该 task 的 infrastructure budget；探针成功产生的候选计入该阶段 quality budget并正常验收，然后降为 1 路补 pending。不得创建无 task 归属的探针。
 - success 默认不重跑；只有用户明确要求，或共同 family/style lock 被证明错误时，才重做明确受影响范围。
 - 不切换未授权图片服务，不索取临时 API key。
 
 ## 联系表
 
-普通批次查看最终图总览；翻译和 Logo 生成按 family 分组的 source/base/final 三联表：
+普通批次查看最终图总览；翻译按 source/pure_generation_candidate/final，Logo 按 source/conflict_reference_base/prepared_base/final 分阶段查看：
 
 ```text
 python scripts/create_contact_sheet.py --manifest <manifest> --output <.xobi/work/source-base-final.jpg>

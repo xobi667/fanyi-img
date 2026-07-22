@@ -43,7 +43,12 @@ class NormalizeConcurrencyTests(unittest.TestCase):
             report_path.write_text("old report\n", encoding="utf-8")
             source_digest = hashlib.sha256(source.read_bytes()).hexdigest()
             manifest = {
-                "schema_version": 3,
+                "schema_version": 4,
+                "image_model_policy": {
+                    "default": "pure_generation",
+                    "reference_images_allowed": False,
+                    "logo_exception": ["deterministic_overlay", "conflict_relocation"],
+                },
                 "manifest_id": "xobi-00000000000000000000000000000000",
                 "revision": 0,
                 "mode": "edit",

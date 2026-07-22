@@ -150,6 +150,30 @@ class ManifestCliTests(unittest.TestCase):
             "--localization-plan-json", plan_path,
         )
 
+    def mark_localization_manifest_as_legacy_reference_edit(
+        self,
+        manifest_path: Path,
+    ) -> dict[str, object]:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["image_model_policy"] = {
+            "default": "legacy",
+            "reference_images_allowed": True,
+            "logo_exception": ["deterministic_overlay", "conflict_relocation"],
+        }
+        manifest["localization_policy"] = {
+            "mode": "text_only_reference_edit",
+            "authorization_scope": "task",
+            "pure_rebuild_allowed": False,
+            "user_approval": None,
+            "reference_edit_quality_attempts": 3,
+            "pure_rebuild_quality_attempts_after_approval": 3,
+        }
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return manifest
+
     def compose_localization_artifact(
         self,
         manifest_path: Path,
@@ -392,13 +416,14 @@ class ManifestCliTests(unittest.TestCase):
         self.assertEqual(1, after_second["revision"])
         self.assertEqual(["success", "pending"], [item["status"] for item in after_second["items"]])
 
-    def test_schema_v2_is_read_and_promoted_on_safe_update(self) -> None:
+    def test_schema_v2_is_read_only_and_requires_current_policy_migration(self) -> None:
         self.write_png(self.input_dir / "source.png", (20, 120, 220))
         manifest_path, manifest = self.preflight()
         manifest["schema_version"] = 2
         manifest.pop("revision", None)
         manifest.pop("retry_policy", None)
         manifest.pop("localization_policy", None)
+        manifest.pop("image_model_policy", None)
         item = manifest["items"][0]
         for key in (
             "output_key",
@@ -414,16 +439,20 @@ class ManifestCliTests(unittest.TestCase):
             json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
+        verified = self.run_cli(VERIFY, "--manifest", manifest_path, "--allow-pending")
+        verification = json.loads(verified.stdout)
+        self.assertTrue(verification["valid"])
+        self.assertEqual(4, verification["schema_version"])
+
         self.write_png(Path(str(item["output"])), (60, 160, 220))
-
-        completed = self.run_cli(UPDATE, *self.update_command(manifest_path, item)[2:])
-
-        self.assertEqual(0, completed.returncode)
-        updated = json.loads(manifest_path.read_text(encoding="utf-8"))
-        self.assertEqual(3, updated["schema_version"])
-        self.assertEqual(1, updated["revision"])
-        self.assertEqual("success", updated["items"][0]["status"])
-        self.assertTrue(updated["items"][0]["output_validation"]["sha256"])
+        rejected = self.run_cli(
+            UPDATE,
+            *self.update_command(manifest_path, item)[2:],
+            check=False,
+        )
+        self.assertNotEqual(0, rejected.returncode)
+        self.assertIn("legacy manifests are read-only", rejected.stderr)
+        self.assertEqual(2, json.loads(manifest_path.read_text(encoding="utf-8"))["schema_version"])
 
     def test_preflight_uses_exif_transposed_source_geometry(self) -> None:
         source = self.input_dir / "rotated.jpg"
@@ -767,8 +796,7 @@ class ManifestCliTests(unittest.TestCase):
 
         plan_path = manifest_path.parent / "work" / "localization_plan.json"
         localized_base = manifest_path.parent / "work" / "localized_base.png"
-        with Image.open(source) as raw_source:
-            raw_source.save(localized_base, format="PNG")
+        Image.new("RGB", (800, 800), (20, 120, 220)).save(localized_base, format="PNG")
         self.run_cli(
             RESAMPLE_IMAGE,
             "--input", localized_base,
@@ -779,20 +807,19 @@ class ManifestCliTests(unittest.TestCase):
         )
         plan = {
             "task_id": item["task_id"],
-            "mode": "text_only_reference_edit",
+            "mode": "pure_generation_localization",
             "source": item["source"],
             "source_sha256": item["source_sha256"],
             "source_size": [item["width"], item["height"]],
             "target_language": "Indonesian",
             "output_ratio": "800x800",
             "target_size": [800, 800],
-            "size_resample": {"required": True, "method": "whole_canvas_lanczos"},
+            "size_resample": {"required": False, "method": None},
             "ratio_adaptation": {"required": False, "allowed_changes": []},
             "text_blocks": [],
             "non_text_inventory": [
                 {"id": "background", "kind": "background_surface", "scope": "canvas", "bbox": None},
             ],
-            "pure_rebuild_allowed": False,
         }
         plan_path.write_text(json.dumps(plan, ensure_ascii=False), encoding="utf-8")
         first_plan_on_success = self.run_cli(
@@ -805,13 +832,6 @@ class ManifestCliTests(unittest.TestCase):
         self.assertNotEqual(0, first_plan_on_success.returncode)
         self.assertIn("separate pending update before success", first_plan_on_success.stderr)
         self.register_localization_plan(manifest_path, item, plan_path)
-        composition = self.compose_localization_artifact(
-            manifest_path,
-            item,
-            plan_path,
-            localized_base,
-            localized_base,
-        )
         with Image.open(output) as raw_output:
             tampered = raw_output.convert("RGB")
         ImageDraw.Draw(tampered).rectangle((600, 600, 799, 799), fill=(255, 0, 0))
@@ -820,11 +840,10 @@ class ManifestCliTests(unittest.TestCase):
             UPDATE,
             *self.update_command(manifest_path, item)[2:],
             "--localized-base", localized_base,
-            "--localization-composition-json", composition,
             check=False,
         )
         self.assertNotEqual(0, arbitrary_final.returncode)
-        self.assertIn("not the deterministic whole-canvas resample", arbitrary_final.stderr)
+        self.assertIn("not the deterministic same-size encoding", arbitrary_final.stderr)
         self.run_cli(
             RESAMPLE_IMAGE,
             "--input", localized_base,
@@ -837,7 +856,6 @@ class ManifestCliTests(unittest.TestCase):
             UPDATE,
             *self.update_command(manifest_path, item)[2:],
             "--localized-base", localized_base,
-            "--localization-composition-json", composition,
         )
         self.assertEqual(0, accepted.returncode)
 
@@ -890,12 +908,124 @@ class ManifestCliTests(unittest.TestCase):
 
         valid_plan = dict(bad_plan)
         valid_plan["target_size"] = [800, 800]
-        valid_plan["size_resample"] = {"required": True, "method": "whole_canvas_lanczos"}
+        valid_plan["size_resample"] = {"required": False, "method": None}
         valid_plan["non_text_inventory"] = [
             {"id": "background", "kind": "background_surface", "scope": "canvas", "bbox": None},
         ]
         bad_plan_path.write_text(json.dumps(valid_plan, ensure_ascii=False), encoding="utf-8")
         self.register_localization_plan(second_manifest_path, second_item, bad_plan_path)
+
+    def test_pure_generation_localization_policy_ratio_and_success_contract(self) -> None:
+        source = self.input_dir / "ratio-source.png"
+        Image.new("RGB", (120, 80), (40, 120, 200)).save(source)
+        completed = self.run_cli(
+            PREFLIGHT,
+            "--input", source,
+            "--mode", "localization",
+            "--operation", "translate existing text only",
+            "--ratio", "1:1",
+            "--target-language", "Indonesian",
+            "--output-root", self.output_root,
+        )
+        manifest_path = Path(next(
+            line.split("=", 1)[1]
+            for line in completed.stdout.splitlines()
+            if line.startswith("manifest=")
+        ))
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual({
+            "default": "pure_generation",
+            "reference_images_allowed": False,
+            "logo_exception": ["deterministic_overlay", "conflict_relocation"],
+        }, manifest["image_model_policy"])
+        self.assertEqual({
+            "mode": "pure_generation_localization",
+            "quality_attempts": 3,
+        }, manifest["localization_policy"])
+        item = manifest["items"][0]
+        plan_path = manifest_path.parent / "work" / "ratio-plan.json"
+        plan = {
+            "task_id": item["task_id"],
+            "mode": "pure_generation_localization",
+            "source": item["source"],
+            "source_sha256": item["source_sha256"],
+            "source_size": [120, 80],
+            "target_language": "Indonesian",
+            "output_ratio": "1:1",
+            "target_size": None,
+            "size_resample": {"required": False, "method": None},
+            "ratio_adaptation": {
+                "required": True,
+                "allowed_changes": ["free_relayout"],
+            },
+            "text_blocks": [{
+                "id": "text-01",
+                "source_bbox": [8, 8, 42, 22],
+                "target_bbox": [8, 8, 42, 22],
+                "source": "SALE",
+                "translation": "DISKON",
+                "target_text_source": "translated",
+                "requested_target_text": None,
+                "role": "heading",
+                "text_layout_adaptation": {"required": False, "reason": None},
+                "protected_non_text_regions": [],
+            }],
+            "non_text_inventory": [
+                {"id": "background", "kind": "background_surface", "scope": "canvas", "bbox": None},
+            ],
+        }
+        plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        invalid_ratio_change = self.run_cli(
+            UPDATE,
+            "--manifest", manifest_path,
+            "--task-id", item["task_id"],
+            "--worker-id", item["worker_id"],
+            "--status", "pending",
+            "--localization-plan-json", plan_path,
+            check=False,
+        )
+        self.assertNotEqual(0, invalid_ratio_change.returncode)
+        self.assertIn("forbidden changes: free_relayout", invalid_ratio_change.stderr)
+        self.assertIn("requires minimal_canvas_adaptation", invalid_ratio_change.stderr)
+
+        plan["ratio_adaptation"]["allowed_changes"] = [
+            "minimal_canvas_adaptation",
+            "proportional_subject_scaling",
+            "necessary_text_reflow",
+        ]
+        plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        self.register_localization_plan(manifest_path, item, plan_path)
+
+        forbidden_reference = self.run_cli(
+            UPDATE,
+            "--manifest", manifest_path,
+            "--task-id", item["task_id"],
+            "--worker-id", item["worker_id"],
+            "--status", "pending",
+            "--attempts", 1,
+            "--failure-type", "quality",
+            "--error", "legacy reference path must not run",
+            "--attempt-stage", "reference_edit",
+            check=False,
+        )
+        self.assertNotEqual(0, forbidden_reference.returncode)
+        self.assertIn("cannot use legacy attempt stages", forbidden_reference.stderr)
+
+        output = Path(str(item["output"]))
+        Image.new("RGB", (96, 96), (40, 120, 200)).save(output, format="PNG")
+        accepted = self.run_cli(
+            UPDATE,
+            *self.update_command(manifest_path, item)[2:],
+            "--localized-base", output,
+        )
+        self.assertEqual(0, accepted.returncode)
+        updated = json.loads(manifest_path.read_text(encoding="utf-8"))
+        accepted_item = updated["items"][0]
+        self.assertEqual("pure_generation", accepted_item["localization_execution_stage"])
+        self.assertIsNone(accepted_item["localization_composition"])
+        self.assertEqual("pure_generation", accepted_item["attempt_history"][-1]["attempt_stage"])
+        verified = self.run_cli(VERIFY, "--manifest", manifest_path)
+        self.assertEqual(0, verified.returncode)
 
     def test_localization_visual_guard_rejects_full_frame_redesign(self) -> None:
         source = self.input_dir / "layout.png"
@@ -931,7 +1061,7 @@ class ManifestCliTests(unittest.TestCase):
         output = Path(str(item["output"]))
         plan = {
             "task_id": item["task_id"],
-            "mode": "text_only_reference_edit",
+            "mode": "pure_generation_localization",
             "source": item["source"],
             "source_sha256": item["source_sha256"],
             "source_size": [256, 256],
@@ -955,7 +1085,6 @@ class ManifestCliTests(unittest.TestCase):
             "non_text_inventory": [
                 {"id": "background", "kind": "background_surface", "scope": "canvas", "bbox": None},
             ],
-            "pure_rebuild_allowed": False,
         }
         plan_path = manifest_path.parent / "work" / "layout-plan.json"
         plan_path.write_text(json.dumps(plan), encoding="utf-8")
@@ -987,29 +1116,14 @@ class ManifestCliTests(unittest.TestCase):
         accepted_draw.rectangle((28, 148, 58, 153), fill=(40, 40, 40))
         accepted_draw.rectangle((31, 158, 55, 163), fill=(40, 40, 40))
         accepted_image.save(output)
-        missing_composition = self.run_cli(
-            UPDATE,
-            *self.update_command(manifest_path, item)[2:],
-            "--localized-base", output,
-            check=False,
-        )
-        self.assertNotEqual(0, missing_composition.returncode)
-        self.assertIn("requires frozen composition provenance", missing_composition.stderr)
-        composition = self.compose_localization_artifact(
-            manifest_path,
-            item,
-            plan_path,
-            output,
-            output,
-        )
         accepted = self.run_cli(
             UPDATE,
             *self.update_command(manifest_path, item)[2:],
             "--localized-base", output,
-            "--localization-composition-json", composition,
         )
         self.assertEqual(0, accepted.returncode)
 
+    @unittest.skip("legacy reference-edit execution is read-only; low-level diagnostic coverage remains separate")
     def test_text_only_pixel_lock_rejects_non_text_changes_and_mask_bypass(self) -> None:
         source = self.input_dir / "pixel-lock.png"
         source_image = Image.new("RGB", (128, 128), (244, 241, 230))
@@ -1037,7 +1151,7 @@ class ManifestCliTests(unittest.TestCase):
             for line in completed.stdout.splitlines()
             if line.startswith("manifest=")
         ))
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest = self.mark_localization_manifest_as_legacy_reference_edit(manifest_path)
         item = manifest["items"][0]
         output = Path(str(item["output"]))
         plan = {
@@ -1308,7 +1422,7 @@ class ManifestCliTests(unittest.TestCase):
         item = manifest["items"][0]
         plan = {
             "task_id": item["task_id"],
-            "mode": "text_only_reference_edit",
+            "mode": "pure_generation_localization",
             "source": item["source"],
             "source_sha256": item["source_sha256"],
             "source_size": [64, 64],
@@ -1332,7 +1446,6 @@ class ManifestCliTests(unittest.TestCase):
             "non_text_inventory": [
                 {"id": "background", "kind": "background_surface", "scope": "canvas", "bbox": None},
             ],
-            "pure_rebuild_allowed": False,
         }
         plan_path = manifest_path.parent / "work" / "frozen-plan.json"
         plan_path.write_text(json.dumps(plan), encoding="utf-8")
@@ -1344,9 +1457,9 @@ class ManifestCliTests(unittest.TestCase):
             "--worker-id", item["worker_id"],
             "--status", "pending",
             "--attempts", "1",
-            "--error", "first reference candidate failed quality review",
+            "--error", "first pure-generation candidate failed quality review",
             "--failure-type", "quality",
-            "--attempt-stage", "reference_edit",
+            "--attempt-stage", "pure_generation",
         )
 
         plan["text_blocks"][0]["source_bbox"] = [0, 0, 32, 32]
@@ -1359,9 +1472,9 @@ class ManifestCliTests(unittest.TestCase):
             "--worker-id", item["worker_id"],
             "--status", "pending",
             "--attempts", "2",
-            "--error", "second reference candidate failed quality review",
+            "--error", "second pure-generation candidate failed quality review",
             "--failure-type", "quality",
-            "--attempt-stage", "reference_edit",
+            "--attempt-stage", "pure_generation",
             check=False,
         )
         self.assertNotEqual(0, changed_after_attempt.returncode)
@@ -1580,7 +1693,7 @@ class ManifestCliTests(unittest.TestCase):
         localized.save(localized_base, format="PNG")
         plan = {
             "task_id": item["task_id"],
-            "mode": "text_only_reference_edit",
+            "mode": "pure_generation_localization",
             "source": item["source"],
             "source_sha256": item["source_sha256"],
             "source_size": [64, 64],
@@ -1606,18 +1719,10 @@ class ManifestCliTests(unittest.TestCase):
                 {"id": "red-icon", "kind": "element", "scope": "region", "bbox": [8, 36, 26, 54]},
                 {"id": "background", "kind": "background_surface", "scope": "canvas", "bbox": None},
             ],
-            "pure_rebuild_allowed": False,
         }
         plan_path = manifest_path.parent / "work" / "same-size-jpeg-plan.json"
         plan_path.write_text(json.dumps(plan), encoding="utf-8")
         self.register_localization_plan(manifest_path, item, plan_path)
-        composition = self.compose_localization_artifact(
-            manifest_path,
-            item,
-            plan_path,
-            localized_base,
-            localized_base,
-        )
         self.run_cli(
             RESAMPLE_IMAGE,
             "--input", localized_base,
@@ -1633,7 +1738,6 @@ class ManifestCliTests(unittest.TestCase):
             UPDATE,
             *self.update_command(manifest_path, item)[2:],
             "--localized-base", localized_base,
-            "--localization-composition-json", composition,
             check=False,
         )
         self.assertNotEqual(0, rejected.returncode)
@@ -1651,10 +1755,10 @@ class ManifestCliTests(unittest.TestCase):
             UPDATE,
             *self.update_command(manifest_path, item)[2:],
             "--localized-base", localized_base,
-            "--localization-composition-json", composition,
         )
         self.assertEqual(0, accepted.returncode)
 
+    @unittest.skip("legacy pure-rebuild execution is retired and cannot receive new attempts")
     def test_pure_rebuild_approval_is_task_scoped_and_failure_gated(self) -> None:
         for index in range(1, 4):
             self.write_png(self.input_dir / f"source-{index}.png", (20 * index, 80, 180))
@@ -1672,7 +1776,7 @@ class ManifestCliTests(unittest.TestCase):
             for line in completed.stdout.splitlines()
             if line.startswith("manifest=")
         ))
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest = self.mark_localization_manifest_as_legacy_reference_edit(manifest_path)
         first, second, third = manifest["items"]
 
         def plan_for(item: dict[str, object]) -> dict[str, object]:
@@ -1903,7 +2007,7 @@ class ManifestCliTests(unittest.TestCase):
         candidate.save(output, format="PNG")
         plan = {
             "task_id": item["task_id"],
-            "mode": "text_only_reference_edit",
+            "mode": "pure_generation_localization",
             "source": item["source"],
             "source_sha256": item["source_sha256"],
             "source_size": [item["width"], item["height"]],
@@ -1927,7 +2031,6 @@ class ManifestCliTests(unittest.TestCase):
             "non_text_inventory": [
                 {"id": "background", "kind": "background_surface", "scope": "canvas", "bbox": None},
             ],
-            "pure_rebuild_allowed": False,
         }
         plan_path = manifest_path.parent / "work" / "user-exact-plan.json"
         plan_path.write_text(json.dumps(plan, ensure_ascii=False), encoding="utf-8")
@@ -2107,6 +2210,7 @@ class ManifestCliTests(unittest.TestCase):
 
         legacy = json.loads(manifest_path.read_text(encoding="utf-8"))
         legacy["schema_version"] = 1
+        legacy.pop("image_model_policy", None)
         legacy["items"][0].pop("output_validation", None)
         manifest_path.write_text(json.dumps(legacy, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
@@ -2114,8 +2218,75 @@ class ManifestCliTests(unittest.TestCase):
         self.assertEqual("", verified.stderr)
         self.assertNotEqual(0, verified.returncode)
         result = json.loads(verified.stdout)
-        self.assertEqual(3, result["schema_version"])
+        self.assertEqual(4, result["schema_version"])
         self.assertTrue(any("missing output validation baseline" in entry["error"] for entry in result["errors"]))
+
+    def test_current_schema_rejects_legacy_or_missing_image_policy(self) -> None:
+        self.write_png(self.input_dir / "source.png", (20, 120, 220))
+        for mutation in ("legacy", "missing"):
+            with self.subTest(mutation=mutation):
+                manifest_path, manifest = self.preflight()
+                if mutation == "legacy":
+                    manifest["image_model_policy"] = {
+                        "default": "legacy",
+                        "reference_images_allowed": True,
+                        "logo_exception": ["deterministic_overlay", "conflict_relocation"],
+                    }
+                else:
+                    manifest.pop("image_model_policy", None)
+                manifest_path.write_text(
+                    json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                rejected = self.run_cli(
+                    VERIFY,
+                    "--manifest", manifest_path,
+                    "--allow-pending",
+                    check=False,
+                )
+                self.assertNotEqual(0, rejected.returncode)
+                errors = [entry["error"] for entry in json.loads(rejected.stdout)["errors"]]
+                self.assertTrue(any("current manifests require the exact pure-generation policy" in error for error in errors))
+
+        localization = self.run_cli(
+            PREFLIGHT,
+            "--input", self.input_dir / "source.png",
+            "--mode", "localization",
+            "--operation", "translate only",
+            "--ratio", "original",
+            "--target-language", "Indonesian",
+            "--output-root", self.output_root,
+        )
+        localization_manifest_path = Path(next(
+            line.split("=", 1)[1]
+            for line in localization.stdout.splitlines()
+            if line.startswith("manifest=")
+        ))
+        localization_manifest = json.loads(localization_manifest_path.read_text(encoding="utf-8"))
+        localization_manifest["localization_policy"] = {
+            "mode": "text_only_reference_edit",
+            "reference_edit_quality_attempts": 3,
+            "pure_rebuild_quality_attempts_after_approval": 3,
+        }
+        localization_manifest_path.write_text(
+            json.dumps(localization_manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        rejected_localization = self.run_cli(
+            VERIFY,
+            "--manifest", localization_manifest_path,
+            "--allow-pending",
+            check=False,
+        )
+        self.assertNotEqual(0, rejected_localization.returncode)
+        localization_errors = [
+            entry["error"]
+            for entry in json.loads(rejected_localization.stdout)["errors"]
+        ]
+        self.assertTrue(any(
+            "current localization manifests require pure_generation_localization" in error
+            for error in localization_errors
+        ))
 
     def test_verify_reports_each_output_hash_change_once(self) -> None:
         self.write_png(self.input_dir / "source.png", (20, 120, 220))

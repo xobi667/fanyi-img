@@ -25,6 +25,7 @@ IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
 UNSUPPORTED_IMAGE_EXTS = {".psd", ".psb"}
 MODES = {"edit", "generate", "localization"}
 ROLES = {"target", "style_reference", "logo", "asset", "layout_reference"}
+DEFAULT_LOGO = Path(__file__).resolve().parent.parent / "assets" / "we-film-logo-template.png"
 WINDOWS_RESERVED_NAMES = {"con", "prn", "aux", "nul", *(f"com{index}" for index in range(1, 10)), *(f"lpt{index}" for index in range(1, 10))}
 OUTPUT_FORMATS = {
     "png": (".png", "PNG", True),
@@ -327,7 +328,7 @@ def logo_record(path: Path) -> dict[str, Any]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Create an xobi-img manifest v3 with isolated worker assignments.")
+    parser = argparse.ArgumentParser(description="Create an xobi-img manifest v4 with isolated worker assignments.")
     parser.add_argument("--input", type=Path, help="Input image, directory, ZIP, PSD, or PSB. Omit for generate mode.")
     parser.add_argument("--mode", required=True, choices=sorted(MODES))
     parser.add_argument("--operation", required=True, help="Confirmed operation summary.")
@@ -344,7 +345,13 @@ def main() -> int:
     parser.add_argument("--output-root", type=Path, help="Parent output directory. Default: beside input/xobi-img-output.")
     parser.add_argument("--task-name", help="Safe task directory name.")
     parser.add_argument("--workers", type=int, choices=range(1, 5), default=4, metavar="1-4")
-    parser.add_argument("--logo", type=Path, help="Logo asset; excluded from target images and locked into the manifest.")
+    logo_group = parser.add_mutually_exclusive_group()
+    logo_group.add_argument("--logo", type=Path, help="Logo asset; excluded from target images and locked into the manifest.")
+    logo_group.add_argument(
+        "--use-default-logo",
+        action="store_true",
+        help="Use the bundled Logo only when the user explicitly requested the default Logo.",
+    )
     parser.add_argument("--exclude", action="append", default=[], help="Path or relative glob to exclude; repeat as needed.")
     parser.add_argument("--roles-file", type=Path, help="UTF-8 JSON mapping paths to target/logo/reference/asset roles.")
     args = parser.parse_args()
@@ -381,7 +388,8 @@ def main() -> int:
     if args.alpha_policy == "required" and args.output_format != "source" and not OUTPUT_FORMATS[args.output_format][2]:
         parser.error(f"output format {args.output_format} cannot satisfy required transparency")
 
-    logo_path = args.logo.resolve() if args.logo else None
+    logo_path = (DEFAULT_LOGO if args.use_default_logo else args.logo)
+    logo_path = logo_path.resolve() if logo_path else None
     if logo_path and not logo_path.is_file():
         parser.error(f"logo not found: {logo_path}")
     if source is None:
@@ -601,13 +609,17 @@ def main() -> int:
                 "infrastructure_backoff_seconds": [2, 5, 10],
                 "parallel_failure_probe_threshold": 2,
             },
+            "image_model_policy": {
+                "default": "pure_generation",
+                "reference_images_allowed": False,
+                "logo_exception": [
+                    "deterministic_overlay",
+                    "conflict_relocation",
+                ],
+            },
             "localization_policy": {
-                "mode": "text_only_reference_edit",
-                "authorization_scope": "task",
-                "pure_rebuild_allowed": False,
-                "user_approval": None,
-                "reference_edit_quality_attempts": 3,
-                "pure_rebuild_quality_attempts_after_approval": 3,
+                "mode": "pure_generation_localization",
+                "quality_attempts": 3,
             } if args.mode == "localization" else None,
             "style_lock": None,
             "layout_families": None,

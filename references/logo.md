@@ -1,6 +1,6 @@
 # Logo 添加唯一规则
 
-本文件是 Logo 添加、冲突重排、尺寸计算和验收的唯一真源；若其他文件的职责化摘要、prompt 模板或验收清单与这里冲突，以本文件为准，不得另定相反规则。
+本文件是 Logo 添加、冲突重排、尺寸计算和验收的唯一真源；若其他文件的职责化摘要、prompt 模板或验收清单与这里冲突，以本文件为准，不得另定相反规则。只有用户明确要求添加 Logo 并确认本次 `logo` 资产时才启用本文件；源图已有 Logo、盘点清单含 Logo 或只要求翻译/普通编辑都不构成例外。Logo 添加是整个 skill 唯一允许本地确定性视觉叠加的功能；`logo_conflict` 也是唯一允许原生图片模型接收参考图的阶段。
 
 ## Logo 资产与标准尺寸
 
@@ -39,7 +39,7 @@
 
 `decision` 只能是 `direct_overlay` 或 `regenerate_for_conflict`。`direct_overlay` 的 `module_anchors` 必须是空数组；`regenerate_for_conflict` 必须为每个 `conflicts` 模块写且只写一个锚点。锚点的 `module_id` 必须对应冲突模块，`placement` 只能是 `right` 或 `below`，`prepared_bbox` 必须记录该完整模块在 `prepared_base` 上的实际位置；它不得与 `safe_zone` 相交，左边或上边必须落在本图 dry-run 给出的 `right_module_start_range` 或 `below_module_start_range`。不得在完成逐图模块盘点、冲突判断和 family 分类前开始生成或叠加。
 
-`regenerate_for_conflict` 还必须在 manifest item 登记 `conflict_reference_base`：它是最终画布尺寸、无 Logo、移动冲突模块之前已经批准的只读基底。组合翻译任务必须由 `localized_base` 通过固定同尺寸编码或同宽高比整图重采样得到它；纯生图任务必须保存第一次发现冲突时的无 Logo 基底；普通 edit 只有 source 与最终画布同尺寸时可省略并默认使用 source，否则也必须显式登记。`prepared_base` 是移动后的基底，二者职责不同，禁止用同一张移动后图片伪装 reference。
+`regenerate_for_conflict` 还必须在 manifest item 登记 `conflict_reference_base`：它是最终画布尺寸、尚未叠加本次 active Logo、移动冲突模块之前已经批准的只读基底；源图原有 Logo 必须仍在其中。组合翻译任务使用已通过 `pure_generation_localization` 验收的完整候选；组合普通 edit 使用已通过 `pure_generation_edit` 验收的完整候选；组合纯文字 generate 使用已验收的生成结果。若用户只要求添加 Logo，不先执行纯生图 edit，源图或用户明确要求的确定性尺寸/格式转换结果就是基底。`prepared_base` 是移动后的基底，二者职责不同，禁止用同一张移动后图片伪装 reference，也不得跳过组合 edit/localization 的纯生图验收直接拿 source 代替其结果。
 
 ## Family pilot 与最多四路
 
@@ -77,14 +77,14 @@
 ## 生成、叠加与验收
 
 1. `direct_overlay` 不调用生图工具，直接在合格底图上确定性叠加真实 Logo。
-2. `regenerate_for_conflict` 只重构发生冲突的信息模块，完整保留源图所有文字、商品、图标、数量和促销信息。验证器必须以 `conflict_reference_base`（普通同尺寸 edit 可用 source）逐模块复算：原 bbox 已实质清除、`prepared_bbox` 存在对应模块、多模块一一匹配且没有交换或复制未移动；同时只允许每个原 bbox、目标 bbox 及固定 2px 羽化边界内变化，其他解码 RGBA 像素逐像素相同。移动前后画布尺寸不同而又没有可重算全画布映射时直接 fail closed。仅改无关像素、手写合法 anchor 或伪造 `passed` 一律不能成功。验证结果保存为带 reference/prepared SHA-256 的 `logo_relocation_validation`，最终 verify 必须重新计算并完全一致。禁止用本地缩小整图、整体平移、补边、模糊背景、顶栏或底板腾位置。
+2. `regenerate_for_conflict` 进入 `attempt_stage=logo_conflict`：这是任何 generate/edit/localization 组合中唯一可把图片传给原生图片模型的参考编辑例外，只传当前 `conflict_reference_base`，不得传 source、pilot、其他任务图片或额外参考。宿主必须支持局部/蒙版式参考编辑并能把可变区域限制在原/目标模块 ROI 加固定 2px 羽化内；不支持时直接报告该冲突任务不可执行，不白耗三次全图生成。它只重构发生冲突的信息模块，完整保留底图所有文字、商品、原有 Logo、图标、数量和促销信息。验证器必须逐模块复算：原 bbox 已实质清除、`prepared_bbox` 存在对应模块、多模块一一匹配且没有交换或复制未移动；同时只允许每个原 bbox、目标 bbox 及固定 2px 羽化边界内变化，其他解码 RGBA 像素逐像素相同。移动前后画布尺寸不同而又没有可重算全画布映射时直接 fail closed。仅改无关像素、手写合法 anchor 或伪造 `passed` 一律不能成功。验证结果保存为带 reference/prepared SHA-256 的 `logo_relocation_validation`，最终 verify 必须重新计算并完全一致。禁止用本地缩小整图、整体平移、补边、模糊背景、顶栏或底板腾位置。
 3. 把冲突模块自然放在 Logo 右侧或下方。最近信息模块的可见边缘紧邻 safe-zone 锚点，不增加第二段空白；safe zone 只能呈现自然背景，不能画出边框、白框、色块或占位符。
-4. 查看无 Logo 底图：`direct_overlay` 只需确认任何信息模块都不与 `visible_bbox` 相交，进入 safe-zone 缓冲环本身不算冲突；`regenerate_for_conflict` 只要求被移动的冲突模块落到 `safe_zone` 外并保持舒适锚点。普通背景或无信息商品边缘可以保留在其中，再执行 `apply_logo.py --safe-zone-approved`。
+4. 查看尚未叠加本次 active Logo 的底图：`direct_overlay` 只需确认任何信息模块都不与 `visible_bbox` 相交，进入 safe-zone 缓冲环本身不算冲突；`regenerate_for_conflict` 只要求被移动的冲突模块落到 `safe_zone` 外并保持舒适锚点。普通背景或无信息商品边缘可以保留在其中，再执行 `apply_logo.py --safe-zone-approved`。
 5. Logo 叠加是最后一次视觉修改；之后禁止再次交给 AI。需要调整尺寸、格式或有损体积时先处理 `prepared_base`，再做最后叠加；叠加后只允许保持解码像素完全相同的无损容器/元数据处理，JPEG/WebP 不得再次有损重编码。
 
-必须完成 source/base/final 三联验收；其中 Logo 的移动前基底记录为 `conflict_reference_base`，移动后基底记录为 `prepared_base`，组合翻译任务另保留 `localized_base`：
+必须完成 source/conflict_reference_base/prepared_base/final 分阶段验收；其中 Logo 的移动前基底记录为 `conflict_reference_base`，移动后基底记录为 `prepared_base`，组合翻译任务另保留 `localized_base`：
 
-- `source/localized_base -> conflict_reference_base`：只允许已批准且可确定性重算的翻译、同尺寸编码或同宽高比整图重采样；不得提前移动冲突模块。
+- `source -> localized_base/base_output -> conflict_reference_base`：组合任务中的 `localized_base` 或 `base_output` 是已通过严格内容锁验收的完整纯生图候选，不要求也不得伪称由 source 确定性像素合成；纯 Logo-only 任务可直接从 source/显式转换结果进入。进入 Logo 阶段前不得提前移动冲突模块或加入本次 active Logo。
 - `conflict_reference_base -> prepared_base`：只移动 plan 中真实冲突模块，原位清除、目标位对应；除原/目标模块 bbox 的固定 2px 羽化边界外，其他 RGBA 像素必须逐像素相同，商品、背景、其他文字、图标、赠品、徽章和标签不得新增、遗漏、重复或漂移。
 - `prepared_base -> final`：除真实 Logo 像素叠加外没有其他视觉变化。
 - `final`：Logo 来源、尺寸、纵横比、位置、颜色和透明度正确，不遮挡任何信息模块；同 family 横向比较保持同一布局逻辑。

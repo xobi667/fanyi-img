@@ -7,12 +7,15 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from PIL import Image
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "create_contact_sheet.py"
+sys.path.insert(0, str(SCRIPT.parent))
+import create_contact_sheet as contact_sheet  # noqa: E402
 
 
 class ContactSheetSafetyTests(unittest.TestCase):
@@ -163,6 +166,108 @@ class ContactSheetSafetyTests(unittest.TestCase):
                 completed = self.run_cli("--manifest", manifest, "--output", path, "--overwrite")
                 self.assertNotEqual(0, completed.returncode)
                 self.assertEqual(before, path.read_bytes())
+
+    def test_triptych_mode_renders_all_four_logo_conflict_stages(self) -> None:
+        task_dir = self.root / "task"
+        source = self.root / "source.jpg"
+        conflict_reference_base = task_dir / ".xobi" / "work" / "conflict-reference.jpg"
+        prepared_base = task_dir / ".xobi" / "work" / "prepared.jpg"
+        final = task_dir / "final.jpg"
+        for path, color in (
+            (source, "red"),
+            (conflict_reference_base, "blue"),
+            (prepared_base, "green"),
+            (final, "yellow"),
+        ):
+            self.write_image(path, color)
+        manifest = task_dir / ".xobi" / "manifest.json"
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text(json.dumps({
+            "items": [{
+                "task_id": "task-000001",
+                "family_id": "family-01",
+                "source": str(source),
+                "conflict_reference_base": str(conflict_reference_base),
+                "prepared_base": str(prepared_base),
+                "output": str(final),
+                "status": "success",
+            }]
+        }), encoding="utf-8")
+
+        rendered_cells: list[tuple[Path | None, int, str]] = []
+        original_draw_thumbnail = contact_sheet.draw_thumbnail
+
+        def record_draw_thumbnail(
+            sheet: Image.Image,
+            draw: object,
+            path: Path | None,
+            left: int,
+            top: int,
+            size: int,
+            label: str,
+            font: object,
+        ) -> bool:
+            rendered_cells.append((path, left, label))
+            return original_draw_thumbnail(sheet, draw, path, left, top, size, label, font)
+
+        with mock.patch.object(contact_sheet, "draw_thumbnail", side_effect=record_draw_thumbnail):
+            sheet, loaded, rows = contact_sheet.triptych_sheet(manifest, 64, 10_000_000)
+        try:
+            self.assertEqual((400, 214), sheet.size)
+            self.assertEqual(4, loaded)
+            self.assertEqual(1, rows)
+            self.assertEqual(
+                ("SOURCE", "CONFLICT BASE", "PREPARED", "FINAL"),
+                contact_sheet.manifest_stage_titles(json.loads(manifest.read_text(encoding="utf-8"))["items"]),
+            )
+            self.assertEqual(
+                [source.resolve(), conflict_reference_base.resolve(), prepared_base.resolve(), final.resolve()],
+                [path for path, _, _ in rendered_cells],
+            )
+            self.assertEqual([18, 118, 218, 318], [left for _, left, _ in rendered_cells])
+            self.assertEqual(
+                [
+                    "task-000001 source",
+                    "task-000001 conflict_reference_base",
+                    "task-000001 prepared_base",
+                    "task-000001 final [success]",
+                ],
+                [label for _, _, label in rendered_cells],
+            )
+        finally:
+            sheet.close()
+
+    def test_triptych_mode_without_logo_conflict_remains_three_columns(self) -> None:
+        task_dir = self.root / "task"
+        source = self.root / "source.jpg"
+        base = task_dir / ".xobi" / "work" / "base.jpg"
+        final = task_dir / "final.jpg"
+        for path, color in ((source, "red"), (base, "blue"), (final, "green")):
+            self.write_image(path, color)
+        manifest = task_dir / ".xobi" / "manifest.json"
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text(json.dumps({
+            "items": [{
+                "task_id": "task-000001",
+                "family_id": None,
+                "source": str(source),
+                "base_output": str(base),
+                "output": str(final),
+                "status": "success",
+            }]
+        }), encoding="utf-8")
+
+        sheet, loaded, rows = contact_sheet.triptych_sheet(manifest, 64, 10_000_000)
+        try:
+            self.assertEqual((300, 214), sheet.size)
+            self.assertEqual(3, loaded)
+            self.assertEqual(1, rows)
+            self.assertEqual(
+                ("SOURCE", "BASE", "FINAL"),
+                contact_sheet.manifest_stage_titles(json.loads(manifest.read_text(encoding="utf-8"))["items"]),
+            )
+        finally:
+            sheet.close()
 
     def test_max_pixels_is_checked_before_allocating_sheet(self) -> None:
         input_dir = self.root / "input"

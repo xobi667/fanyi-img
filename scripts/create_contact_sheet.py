@@ -110,6 +110,44 @@ def item_path(item: dict[str, Any], key: str) -> Path | None:
     return path if path.is_file() else None
 
 
+def manifest_stage_titles(items: list[dict[str, Any]]) -> tuple[str, ...]:
+    if any(item.get("conflict_reference_base") for item in items):
+        return ("SOURCE", "CONFLICT BASE", "PREPARED", "FINAL")
+    return ("SOURCE", "BASE", "FINAL")
+
+
+def manifest_stage_cells(
+    item: dict[str, Any],
+    include_conflict_stage: bool,
+) -> tuple[tuple[Path | None, str], ...]:
+    task_id = str(item.get("task_id") or "")
+    source = item_path(item, "source")
+    final = item_path(item, "output")
+    final_label = f"{task_id} final [{item.get('status', '')}]"
+    if include_conflict_stage:
+        prepared = item_path(item, "prepared_base")
+        prepared_label = f"{task_id} prepared_base"
+        if prepared is None:
+            prepared = item_path(item, "localized_base") or item_path(item, "base_output")
+            prepared_label = f"{task_id} base"
+        return (
+            (source, f"{task_id} source"),
+            (item_path(item, "conflict_reference_base"), f"{task_id} conflict_reference_base"),
+            (prepared, prepared_label),
+            (final, final_label),
+        )
+    middle = (
+        item_path(item, "prepared_base")
+        or item_path(item, "localized_base")
+        or item_path(item, "base_output")
+    )
+    return (
+        (source, f"{task_id} source"),
+        (middle, f"{task_id} base"),
+        (final, final_label),
+    )
+
+
 def triptych_sheet(manifest_path: Path, thumb_size: int, max_pixels: int) -> tuple[Image.Image, int, int]:
     data = json.loads(manifest_path.read_text(encoding="utf-8"))
     items = list(data.get("items", []))
@@ -127,7 +165,9 @@ def triptych_sheet(manifest_path: Path, thumb_size: int, max_pixels: int) -> tup
         family = str(item.get("family_id") or "ungrouped")
         if family not in families:
             families.append(family)
-    width = cell_width * 3
+    stage_titles = manifest_stage_titles(items)
+    include_conflict_stage = len(stage_titles) == 4
+    width = cell_width * len(stage_titles)
     height = header_height + len(families) * family_height + len(items) * row_height
     if width * height > max_pixels:
         raise ValueError(f"contact sheet would exceed max-pixels: {width}x{height}")
@@ -135,7 +175,7 @@ def triptych_sheet(manifest_path: Path, thumb_size: int, max_pixels: int) -> tup
     draw = ImageDraw.Draw(sheet)
     font, _ = load_label_font()
     header_font, _ = load_label_font(20)
-    for column, title in enumerate(("SOURCE", "BASE", "FINAL")):
+    for column, title in enumerate(stage_titles):
         draw.text((column * cell_width + padding, 10), title, fill="black", font=header_font)
     y = header_height
     loaded = 0
@@ -145,19 +185,7 @@ def triptych_sheet(manifest_path: Path, thumb_size: int, max_pixels: int) -> tup
         draw.text((padding, y + 7), f"FAMILY: {family}", fill="#202020", font=font)
         y += family_height
         for item in members:
-            task_id = str(item.get("task_id") or "")
-            middle = (
-                item_path(item, "prepared_base")
-                or item_path(item, "localized_base")
-                or item_path(item, "base_output")
-            )
-            paths = (item_path(item, "source"), middle, item_path(item, "output"))
-            labels = (
-                f"{task_id} source",
-                f"{task_id} base",
-                f"{task_id} final [{item.get('status', '')}]",
-            )
-            for column, (path, label) in enumerate(zip(paths, labels)):
+            for column, (path, label) in enumerate(manifest_stage_cells(item, include_conflict_stage)):
                 if draw_thumbnail(sheet, draw, path, column * cell_width + padding, y + padding, thumb_size, label, font):
                     loaded += 1
             y += row_height
@@ -215,10 +243,10 @@ def manifest_protected_paths(manifest_path: Path) -> set[Path]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Create a final-only grid or family-grouped source/base/final QA contact sheet.")
+    parser = argparse.ArgumentParser(description="Create a final-only grid or family-grouped staged QA contact sheet.")
     inputs = parser.add_mutually_exclusive_group(required=True)
     inputs.add_argument("--input", type=Path, help="Final image directory for a standard grid.")
-    inputs.add_argument("--manifest", type=Path, help="Manifest for a family-grouped source/base/final triptych.")
+    inputs.add_argument("--manifest", type=Path, help="Manifest for a family-grouped three- or four-stage QA sheet.")
     parser.add_argument("--output", required=True, type=Path, help="Output contact-sheet JPG path.")
     parser.add_argument("--thumb", default=320, type=int, help="Thumbnail box size. Default: 320.")
     parser.add_argument("--columns", default=4, type=int, help="Columns for standard grid mode. Default: 4.")

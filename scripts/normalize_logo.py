@@ -15,6 +15,7 @@ from manifest_utils import (
     FileLock,
     atomic_bytes,
     atomic_json,
+    is_legacy_read_only_manifest,
     load_manifest,
     logo_canvas_requires_review,
     now_iso,
@@ -240,6 +241,10 @@ def main() -> int:
             try:
                 manifest = load_manifest(manifest_path) if manifest_path else None
                 if manifest is not None:
+                    if is_legacy_read_only_manifest(manifest):
+                        raise ValueError(
+                            "legacy manifests are read-only; migrate before registering Logo normalization"
+                        )
                     logo_record = manifest.get("logo")
                     if not isinstance(logo_record, dict) or not logo_record.get("enabled"):
                         raise ValueError("manifest does not contain an active Logo record")

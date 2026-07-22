@@ -18,6 +18,8 @@ from manifest_utils import (
     LOGO_REFERENCE_BOX,
     LOGO_REFERENCE_SHORT_SIDE,
     LOGO_SAFE_PADDING,
+    LEGACY_REFERENCE_LOCALIZATION_MODE,
+    PURE_GENERATION_LOCALIZATION_MODE,
     _localization_text_edit_mask,
     active_logo_asset,
     atomic_bytes,
@@ -33,6 +35,9 @@ from manifest_utils import (
     sha256_file,
     validate_manifest,
     validate_item_contract,
+    validate_logo_conflict_attempt_contract,
+    validate_logo_conflict_gate,
+    is_legacy_read_only_manifest,
     validate_localization_attempt_contract,
     validate_localization_composition,
     validate_localization_plan_contract,
@@ -120,12 +125,32 @@ def load_localization_plan_artifact(
         raise ValueError("localization plan source_size does not match preflight")
     if plan.get("target_language") != manifest.get("target_language"):
         raise ValueError("localization plan target language does not match the manifest")
-    if plan.get("mode") != "text_only_reference_edit" or plan.get("pure_rebuild_allowed") is not False:
-        raise ValueError("the frozen pre-attempt localization plan must use text_only_reference_edit")
-    ratio_adaptation = plan.get("ratio_adaptation")
-    if not isinstance(ratio_adaptation, dict) or ratio_adaptation.get("required") is not False:
+    policy = manifest.get("localization_policy")
+    policy_mode = str(policy.get("mode") or "") if isinstance(policy, dict) else ""
+    expected_plan_mode = (
+        PURE_GENERATION_LOCALIZATION_MODE
+        if policy_mode == PURE_GENERATION_LOCALIZATION_MODE
+        else LEGACY_REFERENCE_LOCALIZATION_MODE
+    )
+    if plan.get("mode") != expected_plan_mode:
         raise ValueError(
-            "localization plan ratio adaptation is fail-closed without a structured recomputable mapping"
+            f"the frozen pre-attempt localization plan must use {expected_plan_mode}"
+        )
+    if policy_mode == PURE_GENERATION_LOCALIZATION_MODE:
+        rebuild_flag = plan.get("pure_rebuild_allowed")
+        if rebuild_flag is not None and rebuild_flag is not False:
+            raise ValueError("pure-generation localization plans cannot carry rebuild approval")
+    elif plan.get("pure_rebuild_allowed") is not False:
+        raise ValueError("legacy reference-edit plans cannot pre-authorize pure rebuild")
+    ratio_adaptation = plan.get("ratio_adaptation")
+    if not isinstance(ratio_adaptation, dict):
+        raise ValueError("localization plan ratio_adaptation must be an object")
+    if (
+        policy_mode != PURE_GENERATION_LOCALIZATION_MODE
+        and ratio_adaptation.get("required") is not False
+    ):
+        raise ValueError(
+            "legacy localization plan ratio adaptation is fail-closed without a structured recomputable mapping"
         )
     _, _, mask_errors = _localization_text_edit_mask(
         (int(item.get("width", 0) or 0), int(item.get("height", 0) or 0)),
@@ -251,24 +276,19 @@ def load_logo_geometry_artifact(
     if logo_canvas_requires_review(active_logo, LOGO_ALPHA_THRESHOLD) and not opaque_approval:
         raise ValueError("logo-geometry wrapper requires explicit opaque/edge-reaching review approval")
 
-    prepared_value = item.get("prepared_base")
-    if not prepared_value:
-        raise ValueError("logo-geometry registration requires prepared_base")
-    prepared = Path(str(prepared_value)).resolve()
-    if not prepared.is_file():
-        raise ValueError("logo-geometry prepared_base file is missing")
-    try:
-        with Image.open(prepared) as raw:
-            prepared_image = ImageOps.exif_transpose(raw)
-            prepared_image.load()
-            canvas = [prepared_image.width, prepared_image.height]
-    except (OSError, UnidentifiedImageError, ValueError) as exc:
-        raise ValueError(f"logo-geometry prepared_base is not a readable image: {exc}") from exc
     allowed_sources = {
         canonical_path_key(Path(str(candidate)))
-        for candidate in (item.get("source"), item.get("prepared_base"))
+        for candidate in (
+            item.get("source"),
+            item.get("base_output"),
+            item.get("localized_base"),
+            item.get("conflict_reference_base"),
+            item.get("prepared_base"),
+        )
         if candidate
     }
+    if not allowed_sources:
+        raise ValueError("logo-geometry registration requires a frozen base image")
     wrapper_items = wrapper.get("items")
     if not isinstance(wrapper_items, list):
         raise ValueError("logo-geometry wrapper items must be a list")
@@ -278,11 +298,22 @@ def load_logo_geometry_artifact(
         if isinstance(entry, dict)
         and entry.get("source")
         and canonical_path_key(Path(str(entry["source"]))) in allowed_sources
-        and entry.get("canvas") == canvas
     ]
     if len(matches) != 1:
-        raise ValueError("logo-geometry wrapper must contain exactly one source/prepared_base and canvas match")
+        raise ValueError("logo-geometry wrapper must contain exactly one frozen base image match")
     selected = matches[0]
+    selected_source = Path(str(selected["source"])).resolve()
+    if not selected_source.is_file():
+        raise ValueError("logo-geometry frozen base image is missing")
+    try:
+        with Image.open(selected_source) as raw:
+            selected_image = ImageOps.exif_transpose(raw)
+            selected_image.load()
+            canvas = [selected_image.width, selected_image.height]
+    except (OSError, UnidentifiedImageError, ValueError) as exc:
+        raise ValueError(f"logo-geometry frozen base is not a readable image: {exc}") from exc
+    if selected.get("canvas") != canvas:
+        raise ValueError("logo-geometry canvas does not match its frozen base image")
     geometry_fields = {
         "source",
         "canvas",
@@ -367,6 +398,9 @@ def merge_task_states(data: dict[str, Any], state_dir: Path) -> int:
         if proposed_attempts < current_attempts:
             raise ValueError(f"invalid task state {path}: attempts decreased")
         attempt_record = state.get("attempt_record")
+        attempt_candidate = deepcopy(proposed)
+        if isinstance(attempt_record, dict):
+            attempt_candidate.setdefault("attempt_history", []).append(attempt_record)
         if data.get("mode") == "localization":
             if proposed_attempts not in {current_attempts, current_attempts + 1}:
                 raise ValueError(
@@ -400,15 +434,20 @@ def merge_task_states(data: dict[str, Any], state_dir: Path) -> int:
                 raise ValueError(
                     f"invalid task state {path}: pure_rebuild_approval cannot be replaced"
                 )
-            attempt_candidate = deepcopy(proposed)
-            if isinstance(attempt_record, dict):
-                attempt_candidate.setdefault("attempt_history", []).append(attempt_record)
             attempt_errors = validate_localization_attempt_contract(attempt_candidate, data)
             if attempt_errors:
                 raise ValueError(f"invalid task state {path}: " + "; ".join(attempt_errors))
             plan_errors = validate_localization_plan_registration(attempt_candidate, data)
             if plan_errors:
                 raise ValueError(f"invalid task state {path}: " + "; ".join(plan_errors))
+        if isinstance(attempt_record, dict) and attempt_record.get("attempt_stage") == "logo_conflict":
+            if proposed_attempts != current_attempts + 1:
+                raise ValueError(
+                    f"invalid task state {path}: logo_conflict attempts must increment by exactly one"
+                )
+        conflict_errors = validate_logo_conflict_attempt_contract(attempt_candidate, data)
+        if conflict_errors:
+            raise ValueError(f"invalid task state {path}: " + "; ".join(conflict_errors))
         status = str(proposed.get("status") or "")
         if status not in {"pending", "success", "skipped", "failed"}:
             raise ValueError(f"invalid task state {path}: unsupported status")
@@ -480,7 +519,7 @@ def main() -> int:
     parser.add_argument("--failure-type", choices=["quality", "infrastructure"])
     parser.add_argument(
         "--attempt-stage",
-        choices=["reference_edit", "pure_rebuild", "logo_conflict"],
+        choices=["pure_generation", "reference_edit", "pure_rebuild", "logo_conflict"],
     )
     parser.add_argument("--base-output")
     parser.add_argument("--localized-base")
@@ -532,6 +571,11 @@ def main() -> int:
             structural_errors = validate_manifest(data, check_files=False)
             if structural_errors:
                 raise ValueError("manifest integrity error: " + "; ".join(entry["error"] for entry in structural_errors))
+            if is_legacy_read_only_manifest(data):
+                raise ValueError(
+                    "legacy manifests are read-only; migrate to the current pure-generation policy "
+                    "before recording any new task update or image attempt"
+                )
             matches = [item for item in data.get("items", []) if item.get("task_id") == args.task_id]
             if len(matches) != 1:
                 raise ValueError(f"task-id must match exactly one item: {args.task_id}")
@@ -547,8 +591,29 @@ def main() -> int:
                 raise ValueError("attempts must not decrease")
             success_localization_execution_stage: str | None = None
             if data.get("mode") == "localization":
+                localization_policy = data.get("localization_policy")
+                policy_mode = (
+                    str(localization_policy.get("mode") or "")
+                    if isinstance(localization_policy, dict)
+                    else ""
+                )
+                pure_generation_manifest = policy_mode == PURE_GENERATION_LOCALIZATION_MODE
                 if args.status == "success" and args.attempt_stage is None:
-                    args.attempt_stage = "reference_edit"
+                    args.attempt_stage = (
+                        "pure_generation" if pure_generation_manifest else "reference_edit"
+                    )
+                if pure_generation_manifest and args.attempt_stage not in {
+                    None,
+                    "pure_generation",
+                    "logo_conflict",
+                }:
+                    raise ValueError(
+                        "new pure-generation localization manifests cannot use legacy attempt stages"
+                    )
+                if pure_generation_manifest and args.pure_rebuild_approval is not None:
+                    raise ValueError(
+                        "new pure-generation localization manifests do not use rebuild approval"
+                    )
                 has_frozen_plan = isinstance(current.get("localization_plan"), dict) and isinstance(
                     current.get("localization_plan_registration"), dict
                 )
@@ -618,11 +683,16 @@ def main() -> int:
                     ):
                         raise ValueError("cannot return to reference_edit after pure_rebuild starts")
                 if args.status == "success":
-                    if args.attempt_stage not in {"reference_edit", "pure_rebuild", "logo_conflict"}:
+                    allowed_success_stages = (
+                        {"pure_generation", "logo_conflict"}
+                        if pure_generation_manifest
+                        else {"reference_edit", "pure_rebuild", "logo_conflict"}
+                    )
+                    if args.attempt_stage not in allowed_success_stages:
                         raise ValueError(
-                            "localization success requires reference_edit, pure_rebuild, or logo_conflict stage"
+                            "localization success uses an attempt stage forbidden by its manifest policy"
                         )
-                    if args.attempt_stage in {"reference_edit", "pure_rebuild"}:
+                    if args.attempt_stage in {"pure_generation", "reference_edit", "pure_rebuild"}:
                         success_localization_execution_stage = args.attempt_stage
                     else:
                         accepted_candidates = [
@@ -630,7 +700,11 @@ def main() -> int:
                             for record in current.get("attempt_history", [])
                             if isinstance(record, dict)
                             and record.get("failure_type") is None
-                            and record.get("attempt_stage") in {"reference_edit", "pure_rebuild"}
+                            and record.get("attempt_stage") in {
+                                "pure_generation",
+                                "reference_edit",
+                                "pure_rebuild",
+                            }
                         ]
                         if not accepted_candidates:
                             raise ValueError(
@@ -645,8 +719,39 @@ def main() -> int:
                     if not approval_valid:
                         detail = "; ".join(approval_errors) or "task-scoped approval is missing"
                         raise ValueError("pure rebuild attempt is not authorized: " + detail)
-            elif args.attempt_stage is not None or args.pure_rebuild_approval is not None:
-                raise ValueError("attempt-stage and pure rebuild controls are only valid for localization manifests")
+            elif args.pure_rebuild_approval is not None:
+                raise ValueError("pure rebuild controls are only valid for localization manifests")
+            elif args.attempt_stage not in {None, "logo_conflict"}:
+                raise ValueError(
+                    "edit/generate ordinary visual attempts do not use localization stages; "
+                    "only logo_conflict may be recorded explicitly"
+                )
+            if args.attempt_stage == "logo_conflict":
+                if args.attempts != current_attempts + 1:
+                    raise ValueError("logo_conflict attempts must increment --attempts by exactly one")
+                if any(
+                    value is not None
+                    for value in (
+                        args.logo_plan_file,
+                        args.logo_geometry_json,
+                        args.logo_decision,
+                        args.conflict_reference_base,
+                        args.base_output,
+                        args.localized_base,
+                        args.module_anchors_json,
+                    )
+                ):
+                    raise ValueError(
+                        "logo_conflict plan, geometry, decision, reference, anchors, and accepted base "
+                        "must be frozen in separate prior updates"
+                    )
+                gate_errors = validate_logo_conflict_gate(
+                    current,
+                    data,
+                    before_attempt=int(args.attempts),
+                )
+                if gate_errors:
+                    raise ValueError("logo_conflict gate failed: " + "; ".join(gate_errors))
             if data.get("mode") != "localization" and args.localization_composition_json is not None:
                 raise ValueError("localization composition is only valid for localization manifests")
             if args.localization_composition_json is not None and args.status != "success":
@@ -708,11 +813,24 @@ def main() -> int:
             if args.logo_decision is not None:
                 proposed["logo_decision"] = args.logo_decision
             if args.logo_geometry_json is not None:
+                if current.get("logo_geometry") is not None:
+                    raise ValueError("frozen logo geometry cannot be replaced or re-registered")
+                if (
+                    proposed.get("logo_decision") == "regenerate_for_conflict"
+                    and not proposed.get("conflict_reference_base")
+                ):
+                    raise ValueError(
+                        "regenerate_for_conflict geometry registration requires conflict_reference_base"
+                    )
                 proposed["logo_geometry"] = load_logo_geometry_artifact(
                     args.logo_geometry_json,
                     proposed,
                     data,
                     manifest_path.parent / "work",
+                )
+                proposed["logo_geometry"]["registered_at"] = timestamp
+                proposed["logo_geometry"]["revision_at_registration"] = int(
+                    data.get("revision", 0) or 0
                 )
             if module_anchors is not None:
                 proposed["module_anchors"] = module_anchors
@@ -727,7 +845,14 @@ def main() -> int:
                 proposed["localization_plan"] = localization_plan
                 proposed["localization_plan_registration"] = localization_registration
             if args.status == "success" and data.get("mode") == "localization":
-                execution_stage = success_localization_execution_stage or "reference_edit"
+                policy = data.get("localization_policy")
+                pure_generation_manifest = (
+                    isinstance(policy, dict)
+                    and policy.get("mode") == PURE_GENERATION_LOCALIZATION_MODE
+                )
+                execution_stage = success_localization_execution_stage or (
+                    "pure_generation" if pure_generation_manifest else "reference_edit"
+                )
                 if execution_stage == "pure_rebuild":
                     approval_valid = validate_pure_rebuild_approval(proposed, data)[0]
                     if not approval_valid:
@@ -750,8 +875,55 @@ def main() -> int:
                         )
                 elif args.localization_composition_json is not None:
                     raise ValueError(
-                        "pure_rebuild success must not use text-box composition provenance"
+                        f"{proposed['localization_execution_stage']} success must not use text-box composition provenance"
                     )
+
+            accepted_base_registration: dict[str, Any] | None = None
+            if (
+                args.attempts is not None
+                and args.failure_type is None
+                and args.status in {"pending", "success"}
+            ):
+                accepted_base_kind: str | None = None
+                if data.get("mode") == "localization" and args.attempt_stage == "pure_generation":
+                    accepted_base_kind = "localized_base"
+                elif (
+                    data.get("mode") in {"edit", "generate"}
+                    and args.attempt_stage is None
+                    and args.base_output is not None
+                ):
+                    accepted_base_kind = "base_output"
+                if accepted_base_kind is not None:
+                    accepted_base_value = str(proposed.get(accepted_base_kind) or "")
+                    if not accepted_base_value:
+                        raise ValueError(
+                            f"accepted pure-generation attempt requires --{accepted_base_kind.replace('_', '-')}"
+                        )
+                    accepted_base_path = Path(accepted_base_value).resolve()
+                    if not accepted_base_path.is_file():
+                        raise ValueError("accepted pure-generation base image is missing")
+                    try:
+                        with Image.open(accepted_base_path) as raw_accepted_base:
+                            accepted_image = ImageOps.exif_transpose(raw_accepted_base)
+                            accepted_image.load()
+                    except (OSError, UnidentifiedImageError, ValueError) as exc:
+                        raise ValueError(f"accepted pure-generation base is not a readable image: {exc}") from exc
+                    accepted_base_registration = {
+                        "kind": accepted_base_kind,
+                        "policy": "no_reference_pure_generation",
+                        "path": str(accepted_base_path),
+                        "sha256": sha256_file(accepted_base_path),
+                    }
+                    if data.get("mode") == "localization":
+                        guard_probe = deepcopy(proposed)
+                        guard_probe["localization_execution_stage"] = "pure_generation"
+                        guard_record, guard_errors = localization_visual_guard(guard_probe, data)
+                        if guard_errors:
+                            raise ValueError(
+                                "accepted localization base failed its visual guard: "
+                                + "; ".join(guard_errors)
+                            )
+                        proposed["localization_validation"] = guard_record
 
             for argument, field in (
                 (args.logo_plan_file, "logo_plan"),
@@ -771,6 +943,12 @@ def main() -> int:
                 plan_digest = sha256_file(plan_path)
                 existing_registration = data.get(field)
                 if (
+                    field == "logo_plan"
+                    and isinstance(existing_registration, dict)
+                    and existing_registration.get("sha256")
+                ):
+                    raise ValueError("frozen logo_plan cannot be replaced or re-registered")
+                if (
                     field == "layout_families"
                     and isinstance(existing_registration, dict)
                     and existing_registration.get("sha256")
@@ -786,11 +964,16 @@ def main() -> int:
                     "path": str(plan_path),
                     "sha256": plan_digest,
                     "registered_at": timestamp,
+                    "revision_at_registration": int(data.get("revision", 0) or 0),
                 }
             if args.pure_rebuild_approval is not None:
                 policy = data.get("localization_policy")
                 if policy is None:
                     raise ValueError("pure reconstruction approval is only valid for localization manifests")
+                if policy.get("mode") == PURE_GENERATION_LOCALIZATION_MODE:
+                    raise ValueError(
+                        "new pure-generation localization manifests do not use rebuild approval"
+                    )
                 failures = reference_edit_quality_failures(current)
                 if len(failures) < 3:
                     raise ValueError(
@@ -874,6 +1057,16 @@ def main() -> int:
                     "error": args.error,
                     "recorded_at": timestamp,
                 }
+                if accepted_base_registration is not None:
+                    attempt_record["accepted_base"] = accepted_base_registration
+            if attempt_record is not None and args.attempt_stage == "logo_conflict":
+                attempt_candidate = deepcopy(proposed)
+                attempt_candidate.setdefault("attempt_history", []).append(attempt_record)
+                conflict_errors = validate_logo_conflict_attempt_contract(attempt_candidate, data)
+                if conflict_errors:
+                    raise ValueError(
+                        "logo_conflict attempt contract failed: " + "; ".join(conflict_errors)
+                    )
             state = {"task_id": args.task_id, "worker_id": current.get("worker_id"), "updated_at": timestamp}
             for key in STATE_FIELDS:
                 if key in proposed:

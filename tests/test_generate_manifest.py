@@ -77,6 +77,12 @@ class GenerateManifestTests(unittest.TestCase):
         manifest_path, manifest = self.generate_preflight(6)
 
         self.assertEqual("generate", manifest["mode"])
+        self.assertEqual(4, manifest["schema_version"])
+        self.assertEqual({
+            "default": "pure_generation",
+            "reference_images_allowed": False,
+            "logo_exception": ["deterministic_overlay", "conflict_relocation"],
+        }, manifest["image_model_policy"])
         self.assertIsNone(manifest["input"])
         self.assertEqual(6, manifest["variants"])
         self.assertEqual(4, manifest["workers_active"])
@@ -127,6 +133,61 @@ class GenerateManifestTests(unittest.TestCase):
         self.assertTrue(verification["valid"])
         self.assertEqual(2, verification["success"])
         self.assertEqual([], verification["errors"])
+
+    def test_generate_can_lock_a_dynamic_or_explicit_default_logo_for_later_overlay(self) -> None:
+        logo = self.root / "本次-logo.png"
+        Image.new("RGBA", (60, 20), (220, 80, 30, 255)).save(logo, format="PNG")
+        completed = self.run_cli(
+            PREFLIGHT,
+            "--mode", "generate",
+            "--operation", "生成商品图后添加本次 Logo",
+            "--ratio", "1:1",
+            "--logo", logo,
+            "--output-root", self.output_root,
+        )
+        manifest_path = Path(next(
+            line.split("=", 1)[1]
+            for line in completed.stdout.splitlines()
+            if line.startswith("manifest=")
+        ))
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(str(logo.resolve()), manifest["logo"]["source"])
+        self.assertEqual(
+            [{"path": str(logo.resolve()), "role": "logo"}],
+            manifest["input_roles"],
+        )
+
+        explicit_default = self.run_cli(
+            PREFLIGHT,
+            "--mode", "generate",
+            "--operation", "生成商品图后添加默认 Logo",
+            "--ratio", "1:1",
+            "--use-default-logo",
+            "--output-root", self.output_root,
+        )
+        default_manifest_path = Path(next(
+            line.split("=", 1)[1]
+            for line in explicit_default.stdout.splitlines()
+            if line.startswith("manifest=")
+        ))
+        default_manifest = json.loads(default_manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            str((REPO_ROOT / "assets" / "we-film-logo-template.png").resolve()),
+            default_manifest["logo"]["source"],
+        )
+
+        conflicting = self.run_cli(
+            PREFLIGHT,
+            "--mode", "generate",
+            "--operation", "invalid",
+            "--ratio", "1:1",
+            "--logo", logo,
+            "--use-default-logo",
+            "--output-root", self.output_root,
+            check=False,
+        )
+        self.assertNotEqual(0, conflicting.returncode)
+        self.assertIn("not allowed with argument", conflicting.stderr)
 
     def test_generate_rejects_original_ratio_and_source_output_format(self) -> None:
         for arguments, expected_error in (

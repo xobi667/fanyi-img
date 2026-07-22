@@ -70,112 +70,66 @@ class SkillRuleRegressionTests(unittest.TestCase):
             with self.subTest(path=path.relative_to(REPO_ROOT)):
                 self.assertTrue(path.is_file(), f"缺少规则文件：{path}")
 
-    def test_localization_defaults_to_source_reference_text_only_edit(self) -> None:
-        source_reference = re.compile(
-            r"当前(?:源|目标)图.{0,40}(?:唯一\s*)?(?:target\s*)?(?:参考|reference)",
+    def test_localization_defaults_to_pure_generation_without_references(self) -> None:
+        no_reference = re.compile(
+            r"(?:不传|不得传|禁止传|REFERENCE INPUT:\s*NONE).{0,80}(?:参考图|reference)",
             re.IGNORECASE | re.DOTALL,
         )
 
         for path in LOCALIZATION_POLICY_FILES:
             text = read_utf8(path)
             with self.subTest(path=path.relative_to(REPO_ROOT)):
-                self.assertIn("text_only_reference_edit", text)
-                self.assertRegex(text, source_reference)
+                self.assertIn("pure_generation_localization", text)
+                self.assertRegex(text, no_reference)
 
         prompt_text = read_utf8(PROMPTS)
-        self.assertRegex(
-            prompt_text,
-            re.compile(r"默认.{0,20}当前源图.{0,30}target reference", re.DOTALL),
-        )
+        self.assertIn("PURE GENERATION LOCALIZATION", prompt_text)
+        self.assertIn("REFERENCE INPUT: NONE", prompt_text)
 
-    def test_localization_ratio_exception_is_explicit_and_auditable(self) -> None:
+    def test_localization_plan_and_ratio_are_explicit_and_auditable(self) -> None:
         localization = read_utf8(LOCALIZATION)
         prompts = read_utf8(PROMPTS)
         quality = read_utf8(QUALITY)
         combined = "\n".join((localization, prompts, quality))
 
-        self.assertIn("ratio_adaptation", combined)
-        self.assertIn("RATIO_ADAPTATION", combined)
-        self.assertRegex(localization, re.compile(r"保持原比例.{0,100}绝对锁定", re.DOTALL))
-        self.assertRegex(localization, re.compile(r"新比例.{0,260}fail closed", re.DOTALL))
-        self.assertRegex(localization, re.compile(r"ratio_adaptation\.required=true.{0,140}拒绝", re.DOTALL))
-        self.assertNotRegex(
-            prompts,
-            re.compile(r"different ratio.{0,160}minimal (?:canvas|background|layout)", re.IGNORECASE | re.DOTALL),
-        )
-        self.assertNotIn("as closely as the native editor allows", localization)
-        self.assertRegex(localization, re.compile(r"单图和批量任务都必须.{0,120}localization_plan", re.DOTALL))
-        self.assertIn("size_resample", combined)
+        self.assertIn("output_ratio", combined)
         self.assertIn("target_size", combined)
-        self.assertRegex(
-            localization,
-            re.compile(r"相同宽高比.{0,320}整张画布.{0,60}等比确定性重采样", re.DOTALL),
-        )
+        self.assertRegex(localization, re.compile(r"每张图.{0,160}localization_plan", re.DOTALL))
+        self.assertIn("source_sha256", localization)
+        self.assertIn("text_blocks", localization)
+        self.assertIn("non_text_inventory", localization)
+        self.assertRegex(localization, re.compile(r"保持原比例.{0,160}(?:画布|裁切|布局).{0,80}保持", re.DOTALL))
+        self.assertIn("minimum canvas adaptation", prompts)
 
-    def test_no_affirmative_default_pure_generation_policy(self) -> None:
-        affirmative_default = re.compile(
-            r"默认\s*(?:采用|使用|执行|切换(?:为|到)|走)?\s*(?:纯生图|纯重建)",
-            re.IGNORECASE,
-        )
-        negative_prefix = re.compile(
-            r"(?:不得|禁止|不能|不允许|并非|不是)[^。；;\n]{0,16}$"
-        )
-        forbidden_runtime_phrases = (
-            "localization 不传参考",
-            "localization不传参考",
-            "默认 localization 不传",
-            "默认localization不传",
-        )
-
-        for path in markdown_files():
+    def test_affirmative_default_pure_generation_policy_is_mandatory(self) -> None:
+        for path in LOCALIZATION_POLICY_FILES + (PROMPTS,):
             text = read_utf8(path)
-            relative = path.relative_to(REPO_ROOT)
-            for line_number, line in enumerate(text.splitlines(), start=1):
-                for match in affirmative_default.finditer(line):
-                    prefix = line[: match.start()]
-                    with self.subTest(path=relative, line=line_number):
-                        self.assertRegex(
-                            prefix,
-                            negative_prefix,
-                            f"发现肯定式默认纯生图政策：{relative}:{line_number}: {line}",
-                        )
+            with self.subTest(path=path.relative_to(REPO_ROOT)):
+                self.assertRegex(
+                    text,
+                    re.compile(r"(?:默认.{0,50}纯生图|pure_generation_localization)", re.IGNORECASE | re.DOTALL),
+                )
+        runtimes = read_utf8(RUNTIMES)
+        self.assertRegex(runtimes, re.compile(r"(?:不传|不得传).{0,80}(?:参考图|reference)", re.IGNORECASE | re.DOTALL))
+        self.assertRegex(runtimes, re.compile(r"Logo.{0,100}(?:唯一|例外)", re.IGNORECASE | re.DOTALL))
 
-                folded = line.casefold()
-                for phrase in forbidden_runtime_phrases:
-                    with self.subTest(path=relative, line=line_number, phrase=phrase):
-                        self.assertNotIn(phrase, folded)
-
-    def test_non_text_lock_and_pure_rebuild_permission_are_mandatory(self) -> None:
+    def test_text_only_content_lock_is_mandatory_without_rebuild_approval(self) -> None:
         prompt_text = read_utf8(PROMPTS)
         localization_text = read_utf8(LOCALIZATION)
         skill_text = read_utf8(SKILL)
 
-        self.assertIn("STRICT NON-TEXT LOCK:", prompt_text)
-        self.assertRegex(
-            localization_text,
-            re.compile(r"只有用户.{0,80}明确许可.{0,40}纯生图重建", re.DOTALL),
-        )
-        self.assertIn("pure_rebuild_user_authorized", localization_text)
-        self.assertRegex(skill_text, re.compile(r"纯生图.{0,30}明确许可|明确许可.{0,30}纯生图"))
-        self.assertIn("manifest_id", localization_text)
+        self.assertIn("STRICT CONTENT LOCK:", prompt_text)
+        self.assertIn("STRICT NO-ADDITION RULE:", prompt_text)
+        self.assertIn("pure_generation_localization", localization_text)
+        self.assertRegex(skill_text, re.compile(r"纯生图.{0,80}(?:只替换|唯一授权变化|只翻译)", re.DOTALL))
         self.assertIn("task_id", localization_text)
         self.assertIn("source_sha256", localization_text)
-        self.assertRegex(localization_text, re.compile(r"3 次.{0,40}参考编辑质量失败", re.DOTALL))
-        self.assertIn("许可一张不许可整批", localization_text)
-        self.assertIn("target_text_source=user_exact", localization_text)
+        self.assertRegex(localization_text, re.compile(r"3 次.{0,80}(?:报告失败|不得登记第 4 次成功)", re.DOTALL))
+        self.assertIn("user_exact", localization_text)
         self.assertIn("requested_target_text", localization_text)
-        self.assertIn("--localization-composition-json", localization_text)
-        self.assertIn("background_surface", localization_text)
-        self.assertIn("字符串旧格式直接 fail closed", localization_text)
-        self.assertIn("完整覆盖脚本计算出的交集", localization_text)
-        self.assertRegex(
-            localization_text,
-            re.compile(r"raw candidate.{0,100}重新执行.{0,80}合成", re.IGNORECASE | re.DOTALL),
-        )
-        self.assertRegex(
-            localization_text,
-            re.compile(r"pure_rebuild.{0,160}唯一明确例外", re.IGNORECASE | re.DOTALL),
-        )
+        self.assertIn("non_text_inventory", localization_text)
+        self.assertRegex(localization_text, re.compile(r"不得运行.{0,80}compose_localization", re.DOTALL))
+        self.assertRegex(localization_text, re.compile(r"不需要.{0,80}(?:授权|许可)", re.DOTALL))
 
     def test_logo_policy_separates_collision_and_spacing(self) -> None:
         text = read_utf8(LOGO)
@@ -184,13 +138,47 @@ class SkillRuleRegressionTests(unittest.TestCase):
         self.assertRegex(text, re.compile(r"`safe_zone`.{0,80}只用于.{0,40}(?:间距|布局|锚点)", re.DOTALL))
         self.assertRegex(text, re.compile(r"不得用它扩大冲突范围"))
 
+    def test_logo_is_the_only_explicitly_requested_reference_exception(self) -> None:
+        for path in (SKILL, WORKFLOW, RUNTIMES, LOGO):
+            text = read_utf8(path)
+            with self.subTest(path=path.relative_to(REPO_ROOT)):
+                self.assertRegex(
+                    text,
+                    re.compile(r"用户明确要求添加 Logo", re.IGNORECASE),
+                )
+
+        skill_text = read_utf8(SKILL)
+        logo_text = read_utf8(LOGO)
+        self.assertRegex(skill_text, re.compile(r"源图本来含有 Logo.{0,100}不构成例外", re.DOTALL))
+        self.assertRegex(logo_text, re.compile(r"源图已有 Logo.{0,100}不构成例外", re.DOTALL))
+        self.assertRegex(
+            logo_text,
+            re.compile(r"`logo_conflict`.{0,80}唯一允许.{0,40}参考图", re.DOTALL),
+        )
+
+        agent_text = read_utf8(REPO_ROOT / "agents" / "openai.yaml")
+        self.assertRegex(agent_text, re.compile(r"无(?:真实)?遮挡.{0,40}不(?:额外)?调用(?:图片)?模型"))
+        self.assertRegex(agent_text, re.compile(r"有遮挡.{0,60}局部参考重排"))
+
+    def test_ratio_pilot_and_attempt_wording_cannot_expand_reference_inputs(self) -> None:
+        skill_text = read_utf8(SKILL)
+        prompts_text = read_utf8(PROMPTS)
+        quality_text = read_utf8(QUALITY)
+        glossary_text = read_utf8(REFERENCES / "glossary.md")
+
+        self.assertIn("它们不是“翻译”自动附带的权限", skill_text)
+        self.assertRegex(prompts_text, re.compile(r"FAMILY_PILOT.{0,180}不得把 pilot 图片", re.DOTALL))
+        self.assertIn("Do not attach or reference the pilot image", prompts_text)
+        self.assertIn("返回任何可读取候选就计质量 attempt", quality_text)
+        self.assertRegex(glossary_text, re.compile(r"保持原比例时 `target_bbox` 必须等于 `source_bbox`"))
+
     def test_logo_policy_requires_family_pilot_and_three_way_review(self) -> None:
         text = read_utf8(LOGO)
 
         self.assertRegex(text, re.compile(r"family.{0,40}pilot", re.IGNORECASE | re.DOTALL))
         self.assertRegex(text, re.compile(r"pilot.{0,80}冻结", re.IGNORECASE | re.DOTALL))
         self.assertRegex(text, re.compile(r"冻结.{0,120}最多四路", re.DOTALL))
-        self.assertIn("source/base/final", text)
+        self.assertIn("source/conflict_reference_base/prepared_base/final", text)
         self.assertIn("1036 x 309", text)
         self.assertIn("/ 4000", text)
 
