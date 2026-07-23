@@ -2,7 +2,7 @@
 
 先检查当前会话实际提供的原生图片生成能力、输出落盘方式和并发限制。核心规则不得硬编码 provider、模型、密钥、用户名或某台电脑路径。
 
-本 skill 的预检、manifest、Logo、联系表与安装脚本要求 Python 3.10+ 和 Pillow 9.1+；`install_skill.py` 会在安装前硬检查版本。这些本地脚本不得代替原生图片模型完成普通编辑或翻译。
+本 skill 的预检、manifest、主图 review、Logo、联系表与安装脚本要求 Python 3.10+ 和 Pillow 9.1+；`install_skill.py` 会在安装前硬检查版本。这些本地脚本不得代替原生图片模型完成主图、普通编辑或翻译。
 
 ## 通用调用契约
 
@@ -11,6 +11,7 @@
 - `generate`：原生纯生图，不传参考图。
 - `edit`：执行 `pure_generation_edit`。协调者先查看目标图并冻结完整内容清单，图片模型调用只接收文字 prompt，不传 target、reference、attachment、最近会话图片或隐式图片上下文。
 - `localization`：执行 `pure_generation_localization`。协调者先查看源图并冻结逐块译文及完整内容锁，图片模型调用只接收文字 prompt，不传源图或任何参考图。
+- `commerce_main_image`：只有用户明确授权制作、重做或优化整张主图时执行。先冻结平台、视觉方向、比例、文字策略、商品内容锁与艺术指导；图片模型仍只接收文字 prompt，不传 target/source/asset/style/layout reference、pilot 图片或最近会话图片。每个返回候选都必须冻结独立 full snapshot，完成保持比例长边 256px 和 160px 的三档 finalized review，并在同一 attempt 登记；失败候选绑定 `passed=false` review，不能只为最终 success 制作证据。
 - Logo 例外只在用户明确要求添加 Logo 并确认本次 `logo` 资产时生效；源图已有 Logo 或清单中出现 Logo 不会自动启用例外。
 - Logo `direct_overlay`：不调用图片模型，最后使用本次真实 Logo 资产做本地确定性叠加。
 - Logo `logo_conflict`：唯一参考编辑例外。只有本次 active Logo 可见像素会遮挡信息模块时，才可把尚未叠加本次 active Logo 的 `conflict_reference_base` 作为唯一参考，局部重排冲突模块；源图原有 Logo 仍保留，不得夹带其他图片。
@@ -21,7 +22,7 @@
 ## Codex
 
 - 使用当前会话提供的原生图片生成能力，并严格按实际 schema 传参。
-- generate/edit/localization 都调用全新生图路径：省略 `referenced_image_paths`、`num_last_images_to_include` 以及任何等价参考输入字段。即使源图已有本地路径或出现在最近对话，也不得附带。
+- generate/edit/localization/commerce_main_image 都调用全新生图路径：省略 `referenced_image_paths`、`num_last_images_to_include` 以及任何等价参考输入字段。即使源图已有本地路径或出现在最近对话，也不得附带。
 - 源图只供调用前的人工查看、文字盘点、内容清单和最终对照验收使用。
 - 只有 `attempt_stage=logo_conflict` 可使用 `conflict_reference_base` 的本地参考路径；宿主必须支持把编辑限制在冻结 ROI/蒙版内，否则直接报告该冲突任务不可执行。调用完成后仍必须运行 Logo 专属冲突验证，再确定性叠加真实 Logo。
 - 工具返回结果后立即保存到当前 task 隔离路径并更新 task state。
@@ -29,13 +30,13 @@
 ## OpenClaw / Clawdbot
 
 - 使用当前会话已暴露且配置完成的原生图片工具；工具名和参数以实际 schema 为准。
-- generate/edit/localization 选择“新建/生成”语义，不传当前 target、source、附件、引用消息图片或等价参考字段。只返回远端附件时，用宿主合法附件保存能力落入预分配路径；无法落盘就记录基础设施失败。
+- generate/edit/localization/commerce_main_image 选择“新建/生成”语义，不传当前 target、source、附件、引用消息图片或等价参考字段。只返回远端附件时，用宿主合法附件保存能力落入预分配路径；无法落盘就记录基础设施失败。
 - 只有 Logo 冲突任务可选择明确支持的局部参考编辑语义，并只传尚未叠加本次 active Logo 的 `conflict_reference_base`；不支持局部 ROI 锁时停止该任务。
 - 不指定固定 Gemini、Nano Banana、OpenAI API 或其他 provider，不索取临时 API key。
 
 ## 其他 AgentSkills 宿主
 
-- 只有会话确实存在原生纯生图能力时执行 generate/edit/localization；将冻结计划转成文字 prompt，不猜测不存在的参数。
+- 只有会话确实存在原生纯生图能力时执行 generate/edit/localization/commerce_main_image；将冻结计划转成文字 prompt，不猜测不存在的参数。
 - 宿主只支持参考编辑、不支持无参考纯生图时，报告能力限制；不得把普通 edit/localization 静默改成参考编辑，也不得用本地脚本冒充完成。
 - 宿主无法隔离最近图片上下文时使用新的独立图片会话；仍无法保证无参考输入时停止该 task。
 - Logo 冲突参考编辑和最终本地 Logo 叠加继续遵守 [logo.md](logo.md)。

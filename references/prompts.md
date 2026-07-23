@@ -24,6 +24,35 @@ Output ratio: {RATIO OR ORIGINAL}. Do not alter, redesign, beautify, replace, ad
 
 多素材任务先逐一写明角色并把允许使用的视觉信息转写进当前 prompt；target、asset、style 或 layout 图片一律不传给图片模型，即使用户要求“参考”也只由协调者查看后转写。只有用户明确要求添加 Logo、真实发生遮挡并通过 [logo.md](logo.md) 门禁时，才可把尚未叠加本次 active Logo 的 `conflict_reference_base` 作为唯一参考。
 
+## commerce_main_image 显式创意主图
+
+只有用户明确要求制作、重做或优化整张主图时使用。完整边界、艺术指导与验收以 [main-image.md](main-image.md) 为唯一真源。无输入按基础 `generate` 预检，有输入按基础 `edit` 预检；图片调用都不传参考图。每个 task 使用：
+
+```text
+PURE GENERATION COMMERCE MAIN IMAGE. REFERENCE INPUT: NONE. CREATIVE ROUTE: commerce_main_image.
+Create one complete {RATIO} commerce main image for {PLATFORM_PROFILE}. Follow the frozen visual direction exactly: {VISUAL_DIRECTION}.
+
+PRODUCT AND CONTENT LOCK: {PRODUCT_CONTENT_LOCK}. Preserve the exact product identity, quantity, model, color, components, natural proportions, real structure, verified facts, and required Logo status. Do not invent unseen product structures or alter any locked fact.
+
+TEXT POLICY: {TEXT_POLICY}. Use exactly {EXACT_TEXT}. If no_text, add no headline, caption, marketing copy, badge, watermark, or pseudo-text; still preserve only the locked brand marks and printed text physically present on the product or packaging. Never invent, paraphrase, embellish, or infer a selling point, parameter, certification, discount, rating, gift, or claim.
+
+ART DIRECTION LOCK: Use one visual focal point with the product as the first reading layer. Target product occupancy {HERO_OCCUPANCY} and safe margin {SAFE_MARGIN}. Use only the minimum necessary information hierarchy: {INFORMATION_HIERARCHY}. Keep the product complete, recognizable, naturally proportioned, and clearly separated from the background.
+
+CAMERA, SCALE, AND COMPOSITION: {CAMERA_AND_SCALE}; {COMPOSITION}. Keep perspective, horizon, prop scale, crop, balance, and negative space physically credible. Never stretch, squash, locally enlarge, crowd, or make the product float.
+
+LIGHTING, SHADOW, AND MATERIAL: {LIGHTING_AND_SHADOW}; {MATERIAL_RESPONSE}. Use coherent key light, highlight control, contact shadow, edge separation, texture scale, roughness, reflection, transmission, and fabric/metal/glass/plastic response appropriate to the real product. Avoid waxy or plasticized surfaces, dirty or double shadows, repeated textures, fake gloss, and unsupported highlights.
+
+BACKGROUND AND COLOR: {BACKGROUND_AND_COLOR}. Keep the background clean, the product separated by controlled value/color contrast, and saturation/highlights restrained.
+
+THUMBNAIL GATE: When proportionally reduced with no crop or stretch to a 256px longest edge and a 160px longest edge, the product, single focal point, and silhouette must remain immediately recognizable. If text is allowed, the primary message must remain readable; secondary text must not be required to understand the image.
+
+FORBIDDEN COMMERCIAL CLICHES: no cheap yellow-black promotional strips, random red corner badges, thick outlines, oval stickers or pill patches, crowded collages, fake 3D lettering/buttons/floating icons, oversaturation, fabricated claims, or pseudo-text.
+
+If this task includes a later active Logo overlay, do not draw, imitate, spell, or include that active Logo. The exact asset is handled only by the separate Logo workflow.
+```
+
+主图重试只补强当前失败轴，例如 `weak_single_focus`、`hero_occupancy_or_margin_fail`、`cluttered_hierarchy`、`material_unrealistic`、`scale_or_perspective_fail`、`lighting_or_shadow_fail`、`thumbnail_256_fail`、`thumbnail_160_fail` 或 `cheap_cliche_or_invented_claim`；不得放松商品与精确文字锁，也不得把失败候选作为下一次参考。
+
 ## localization 默认纯生图只换字
 
 使用 [localization.md](localization.md) 的逐图冻结计划组装 prompt。不得传源图或任何参考图；prompt 必须包含：

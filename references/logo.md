@@ -78,9 +78,10 @@
 
 1. `direct_overlay` 不调用生图工具，直接在合格底图上确定性叠加真实 Logo。
 2. `regenerate_for_conflict` 进入 `attempt_stage=logo_conflict`：这是任何 generate/edit/localization 组合中唯一可把图片传给原生图片模型的参考编辑例外，只传当前 `conflict_reference_base`，不得传 source、pilot、其他任务图片或额外参考。宿主必须支持局部/蒙版式参考编辑并能把可变区域限制在原/目标模块 ROI 加固定 2px 羽化内；不支持时直接报告该冲突任务不可执行，不白耗三次全图生成。它只重构发生冲突的信息模块，完整保留底图所有文字、商品、原有 Logo、图标、数量和促销信息。验证器必须逐模块复算：原 bbox 已实质清除、`prepared_bbox` 存在对应模块、多模块一一匹配且没有交换或复制未移动；同时只允许每个原 bbox、目标 bbox 及固定 2px 羽化边界内变化，其他解码 RGBA 像素逐像素相同。移动前后画布尺寸不同而又没有可重算全画布映射时直接 fail closed。仅改无关像素、手写合法 anchor 或伪造 `passed` 一律不能成功。验证结果保存为带 reference/prepared SHA-256 的 `logo_relocation_validation`，最终 verify 必须重新计算并完全一致。禁止用本地缩小整图、整体平移、补边、模糊背景、顶栏或底板腾位置。
-3. 把冲突模块自然放在 Logo 右侧或下方。最近信息模块的可见边缘紧邻 safe-zone 锚点，不增加第二段空白；safe zone 只能呈现自然背景，不能画出边框、白框、色块或占位符。
-4. 查看尚未叠加本次 active Logo 的底图：`direct_overlay` 只需确认任何信息模块都不与 `visible_bbox` 相交，进入 safe-zone 缓冲环本身不算冲突；`regenerate_for_conflict` 只要求被移动的冲突模块落到 `safe_zone` 外并保持舒适锚点。普通背景或无信息商品边缘可以保留在其中，再执行 `apply_logo.py --safe-zone-approved`。
-5. Logo 叠加是最后一次视觉修改；之后禁止再次交给 AI。需要调整尺寸、格式或有损体积时先处理 `prepared_base`，再做最后叠加；叠加后只允许保持解码像素完全相同的无损容器/元数据处理，JPEG/WebP 不得再次有损重编码。
+3. 每次 `logo_conflict` 调用只要返回可读取候选，就用当前全局 attempt 加 1 登记一次质量候选，并显式传入该次唯一的 `--prepared-base`。候选必须保存在 `.xobi/work`，各 attempt 不得复用路径或 SHA-256；manifest 为每次候选冻结 `candidate_path`、`candidate_sha256`、`candidate_width`、`candidate_height` 并在后续 verify 重新读取，历史失败候选不得删除或覆盖。最多 3 个质量候选；没有候选的基础设施 attempt 最多 4 个，且禁止携带 `prepared_base`、output、layout family、style lock 或任何候选产物。任何 `failure_type=None` 的 accepted 候选必须在同一次 update 复算通过完整 relocation/pixel-lock，并把完全相同的 `logo_relocation_validation` 同时绑定到 item 和 attempt；pending 也不例外，不能拖到最终 success 才验。候选一旦验收通过，`logo_conflict` 阶段立即封口，最终确定性叠加不再增加图片 attempt。
+4. 把冲突模块自然放在 Logo 右侧或下方。最近信息模块的可见边缘紧邻 safe-zone 锚点，不增加第二段空白；safe zone 只能呈现自然背景，不能画出边框、白框、色块或占位符。
+5. 查看尚未叠加本次 active Logo 的底图：`direct_overlay` 只需确认任何信息模块都不与 `visible_bbox` 相交，进入 safe-zone 缓冲环本身不算冲突；`regenerate_for_conflict` 只要求被移动的冲突模块落到 `safe_zone` 外并保持舒适锚点。普通背景或无信息商品边缘可以保留在其中，再执行 `apply_logo.py --safe-zone-approved`。
+6. Logo 叠加是最后一次视觉修改；之后禁止再次交给 AI。需要调整尺寸、格式或有损体积时先处理 `prepared_base`，再做最后叠加；叠加后只允许保持解码像素完全相同的无损容器/元数据处理，JPEG/WebP 不得再次有损重编码。
 
 必须完成 source/conflict_reference_base/prepared_base/final 分阶段验收；其中 Logo 的移动前基底记录为 `conflict_reference_base`，移动后基底记录为 `prepared_base`，组合翻译任务另保留 `localized_base`：
 

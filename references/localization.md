@@ -14,7 +14,7 @@
 1. 查看当前源图，逐块记录原文、准确译文、位置、层级、颜色、字体视觉、对齐、换行、数字、型号、单位及其关联图标；同时盘点商品、照片、人物、Logo、图标、徽章、边框、色块、背景、阴影、纹理、装饰、数量、顺序和相对关系。
 2. 在第一次图片调用前冻结逐图 `localization_plan`。用户给出精确目标文案时标记 `target_text_source=user_exact`，逐 Unicode 字符锁定，禁止精简、润色、纠错或改写。
 3. 根据该图的完整盘点组装独立纯生图 prompt。不得把源图作为 target、reference、attachment、最近会话图片或其他隐式参考输入；不得引用另一 task 的图片或 prompt。
-4. 每次调用只生成一张完整候选并保存到当前 task 隔离的 `.xobi/work/`。候选通过验收后，其完整视觉内容直接成为 final；允许复制、移动、重命名和写 manifest，但禁止本地蒙版、裁贴、文字框合成、局部像素回填或二次 AI 编辑。
+4. 每次调用只生成一张完整候选并保存到当前 task 隔离的 `.xobi/work/`。候选通过验收后，其完整视觉内容直接成为无 Logo 任务的 final，或登记为组合 Logo 任务的 `localized_base`；同一次接受更新立即封闭该 task 的 `pure_generation` 图片阶段，此后禁止再追加该阶段的 quality 或 infrastructure attempt。允许复制、移动、重命名和写 manifest，但禁止本地蒙版、裁贴、文字框合成、局部像素回填或二次 AI 编辑。
 5. 任何未授权变化都判质量失败，并从同一个 `pure_generation_localization` 阶段重新生成；不得切到参考编辑，也不得交付“文字对了但商品、背景或版式变了”的结果。
 
 ## 翻译改动边界
@@ -97,13 +97,17 @@
 - 每次尝试都使用冻结的源图盘点和计划重新纯生图，不把失败候选作为参考或下一次输入。
 - 逐字核对语言、拼写、标点、数字、币种、型号、数量、尺寸、单位和换行；确认无漏译、重复、新增、乱码或伪字。
 - 把 source/candidate/final 并排查看，逐项核对所有商品、照片、人物、图标、Logo、徽章、边框、色块、背景、阴影、纹理、数量、顺序、位置、尺度、构图和版式。任何未点名变化直接失败。
-- 每次图片调用连续登记唯一 attempt。计划模式是 `pure_generation_localization`，每次调用登记 `attempt_stage=pure_generation`；返回候选即占用一次质量尝试。初次结果后最多 2 次针对性重试，每图总计最多 3 次。三次都不合格就停止并报告具体失败项，不得登记第 4 次成功。
+- 每次图片调用连续登记唯一 attempt。计划模式是 `pure_generation_localization`，每次调用登记 `attempt_stage=pure_generation`；返回候选即占用一次质量尝试。初次结果后最多 2 次针对性重试，每图总计最多 3 次。候选一经接受，当前 `pure_generation` attempt 就是该阶段最后一条记录，阶段立即封口；三次都不合格则停止并报告具体失败项，不得登记第 4 次成功。
 - 没有候选的限流、连接、附件或落盘错误属于 infrastructure attempt；初次调用后最多重试 3 次，按 2/5/10 秒退避，共最多 4 次，不占质量预算。
 - 不存在先做 3 次 reference edit 再申请纯生图许可的流程；纯生图就是默认阶段，也不得在失败后降级到本地文字框拼贴。
 
 ## Logo 组合任务
 
-翻译候选通过上述验收后，把它登记为“尚未叠加本次 active Logo”的 `localized_base`；源图原有 Logo 必须仍在其中。若本次 active Logo 不遮挡信息模块，直接按 [logo.md](logo.md) 最后一步本地确定性叠加；若会遮挡，才允许进入 Logo 专属 `logo_conflict` 参考编辑/局部重排例外，先得到合格 `prepared_base`，再确定性叠加。Logo 叠加后禁止再次交给 AI。
+翻译候选通过上述验收后，把它登记为“尚未叠加本次 active Logo”的 `localized_base`；源图原有 Logo 必须仍在其中。登记接受候选的同一次 `pure_generation` attempt 随即封口，后续 Logo 流程不得重开或补记翻译 attempt。
+
+- 若本次 active Logo 不遮挡信息模块，执行 `direct_overlay`：按 [logo.md](logo.md) 最后一步本地确定性叠加，然后用不带 `--attempts`、`--attempt-stage` 的最终 success 更新收尾；不得生成新的 attempt record，task 的 attempts 总数与接受 `localized_base` 时保持一致。
+- 只有 dry-run 与冻结 Logo plan 证明存在真实信息冲突，并且确实调用图片模型重排冲突模块时，才允许用后续独立图片 attempt 登记 `attempt_stage=logo_conflict`。无冲突、`direct_overlay`、单纯确定性叠加或 success 状态更新都不得增加 attempt。
+- `logo_conflict` 候选通过后再确定性叠加；该最终叠加同样不增加图片 attempt。Logo 叠加后禁止再次交给 AI。
 
 ## 旧版兼容
 

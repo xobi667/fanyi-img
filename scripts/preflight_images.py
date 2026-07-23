@@ -18,7 +18,16 @@ from typing import Any
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from manifest_utils import SCHEMA_VERSION, atomic_json, expected_geometry, now_iso, sha256_file, write_report
+from manifest_utils import (
+    COMMERCE_MAIN_IMAGE_WORKFLOW,
+    SCHEMA_VERSION,
+    atomic_json,
+    expected_geometry,
+    now_iso,
+    operation_authorizes_commerce_main_image,
+    sha256_file,
+    write_report,
+)
 
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
@@ -331,8 +340,26 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Create an xobi-img manifest v4 with isolated worker assignments.")
     parser.add_argument("--input", type=Path, help="Input image, directory, ZIP, PSD, or PSB. Omit for generate mode.")
     parser.add_argument("--mode", required=True, choices=sorted(MODES))
+    parser.add_argument("--workflow", choices=[COMMERCE_MAIN_IMAGE_WORKFLOW])
     parser.add_argument("--operation", required=True, help="Confirmed operation summary.")
     parser.add_argument("--ratio", required=True, help="Confirmed ratio, dimensions, or 'original'.")
+    parser.add_argument("--platform-profile", help="Required frozen platform profile for commerce_main_image.")
+    parser.add_argument("--visual-direction", help="Required frozen visual direction for commerce_main_image.")
+    parser.add_argument(
+        "--text-policy",
+        choices=["no_text", "preserve_existing_exact", "user_exact"],
+        help="Required frozen text policy for commerce_main_image.",
+    )
+    exact_text_group = parser.add_mutually_exclusive_group()
+    exact_text_group.add_argument(
+        "--exact-text",
+        help="Exact user-supplied copy; only valid with text-policy user_exact.",
+    )
+    exact_text_group.add_argument(
+        "--exact-text-file",
+        type=Path,
+        help="Strict UTF-8 file containing exact user copy; only valid with text-policy user_exact.",
+    )
     parser.add_argument("--variants", type=int, default=1, help="Number of independent outputs for generate mode.")
     parser.add_argument("--target-language", help="Required for localization.")
     parser.add_argument("--output-format", choices=[*OUTPUT_FORMATS, "source"], default="png")
@@ -356,6 +383,13 @@ def main() -> int:
     parser.add_argument("--roles-file", type=Path, help="UTF-8 JSON mapping paths to target/logo/reference/asset roles.")
     args = parser.parse_args()
 
+    exact_text_value = args.exact_text
+    if args.exact_text_file is not None:
+        try:
+            exact_text_value = args.exact_text_file.resolve().read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            parser.error(f"could not read --exact-text-file as strict UTF-8: {exc}")
+
     if args.variants < 1:
         parser.error("--variants must be a positive integer")
     if args.mode == "generate":
@@ -378,6 +412,41 @@ def main() -> int:
         parser.error("--target-language is required for localization")
     if not args.operation.strip() or not args.ratio.strip():
         parser.error("operation and ratio must be non-empty")
+    commerce_options = (
+        args.platform_profile,
+        args.visual_direction,
+        args.text_policy,
+        exact_text_value,
+    )
+    if args.workflow == COMMERCE_MAIN_IMAGE_WORKFLOW:
+        if args.mode not in {"edit", "generate"}:
+            parser.error("commerce_main_image workflow is only available for edit and generate")
+        if not operation_authorizes_commerce_main_image(args.operation):
+            parser.error(
+                "commerce_main_image requires explicit creative authorization to create, redo, or optimize the main image"
+            )
+        if not isinstance(args.platform_profile, str) or not args.platform_profile.strip():
+            parser.error("commerce_main_image requires --platform-profile")
+        if not isinstance(args.visual_direction, str) or not args.visual_direction.strip():
+            parser.error("commerce_main_image requires --visual-direction")
+        if args.text_policy is None:
+            parser.error("commerce_main_image requires --text-policy")
+        if args.text_policy == "user_exact":
+            if not isinstance(exact_text_value, str) or not exact_text_value.lstrip("\ufeff").strip():
+                parser.error("text-policy user_exact requires non-empty --exact-text or --exact-text-file")
+        elif exact_text_value is not None:
+            parser.error("--exact-text/--exact-text-file is only valid with text-policy user_exact")
+        if args.mode == "generate" and args.text_policy == "preserve_existing_exact":
+            parser.error("preserve_existing_exact requires an input and is only valid in edit mode")
+    else:
+        if operation_authorizes_commerce_main_image(args.operation):
+            parser.error(
+                "explicit main-image creation requires --workflow commerce_main_image and its frozen policy inputs"
+            )
+        if any(value is not None for value in commerce_options):
+            parser.error(
+                "--platform-profile, --visual-direction, --text-policy, and --exact-text require --workflow commerce_main_image"
+            )
     normalized_ratio = args.ratio.strip().lower().replace(" ", "").replace("：", ":")
     if args.mode == "generate" and normalized_ratio in {"original", "keep-original", "保持原比例", "原比例"}:
         parser.error("generate mode requires an explicit ratio or dimensions; 'original' is not allowed")
@@ -488,6 +557,9 @@ def main() -> int:
                     "localization_plan_registration": None,
                     "localization_execution_stage": None,
                     "localization_composition": None,
+                    "main_image_plan": None,
+                    "main_image_plan_registration": None,
+                    "main_image_quality_review": None,
                     "width": 0,
                     "height": 0,
                     "format": "",
@@ -577,6 +649,9 @@ def main() -> int:
                     "localization_plan_registration": None,
                     "localization_execution_stage": None,
                     "localization_composition": None,
+                    "main_image_plan": None,
+                    "main_image_plan_registration": None,
+                    "main_image_quality_review": None,
                     **info,
                 })
 
@@ -588,6 +663,14 @@ def main() -> int:
             "updated_at": now_iso(),
             "host": "auto",
             "mode": args.mode,
+            "workflow": args.workflow,
+            "main_image_policy": {
+                "platform_profile": args.platform_profile.strip(),
+                "visual_direction": args.visual_direction.strip(),
+                "output_ratio": args.ratio.strip(),
+                "text_policy": args.text_policy,
+                "exact_text": exact_text_value if args.text_policy == "user_exact" else "",
+            } if args.workflow == COMMERCE_MAIN_IMAGE_WORKFLOW else None,
             "operation": args.operation.strip(),
             "ratio": args.ratio.strip(),
             "output_format": args.output_format,

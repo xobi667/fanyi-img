@@ -10,6 +10,24 @@
 - 原图未覆盖，成品路径与 manifest 预分配路径一致。
 - 必须视觉查看本地成品；脚本返回 0、文件存在或分辨率正确都不能代替视觉验收。
 
+## commerce_main_image
+
+只有已按 [main-image.md](main-image.md) 显式进入 `commerce_main_image` 并冻结四项门禁与艺术指导的 task 才执行本节。内容正确不是充分条件；审美不合格本身就是 quality failure。
+
+- manifest 的 `workflow=commerce_main_image`、`main_image_policy`、商品内容锁和艺术指导均已在第一次图片调用前冻结；`main_image_policy` 中的平台或“通用电商”、视觉方向、比例、文字策略和精确文字与用户确认一致，候选返回后不得为了包容结果改 plan。
+- 图片模型调用为 `REFERENCE INPUT: NONE`。source、target、asset、style/layout reference、pilot 图片和最近会话图片都未作为参考输入；Logo 例外仍只按 [logo.md](logo.md) 生效。
+- 全尺寸候选中的单一焦点明确，商品是第一阅读层；商品完整、轮廓清楚、占比与安全边距落在 plan 的冻结范围，没有危险裁切、拉伸、压扁、局部放大或漂浮感。
+- 信息层级使用实现目标所需的最少层数；没有拥挤拼贴或互相争抢注意力的道具、文字、角标和装饰。文字严格符合 `text_policy`；`no_text` 时没有新增画布/营销文案，但商品本体、包装、铭牌上的锁定印刷及源图原有 Logo 仍保留，除非用户另行明确授权删除。无编造卖点、参数、认证、折扣、评分、赠品、伪字或遗漏的必需精确文案。
+- 商品尺度、透视、场景关系可信；材质纹理尺度、粗糙度、反射、透射或织物细节真实，没有塑料化、蜡感、过度磨皮、重复纹理、伪高光或虚假结构。
+- 主光方向、曝光、高光、接触阴影、反射和轮廓分离一致；商品不漂浮，阴影不脏、不双重且不与光源矛盾。背景干净，主体分离充分，色彩和饱和度受控。
+- 没有廉价黄黑促销条、随机红角标、粗描边、椭圆贴片、拥挤拼贴、廉价伪 3D 文字/按钮/漂浮图标、过饱和或其他冻结禁用样式。
+- 必须按 [main-image.md](main-image.md) 的真实两步 CLI 先 `prepare`，把候选原始字节冻结为独立 full snapshot，实际视觉查看全尺寸/保持比例长边 `256px`/保持比例长边 `160px` 三档，再填写绑定模板并 `finalize`。每个有候选的 attempt 必须在同一次 manifest update 绑定自己的 review；失败 review 必须是 `passed=false`，通过 review 必须是 `passed=true`。七项分数全部 `>=4`、六项 required checks 全为 `true`、八项 hard rejects 全为 `false` 后才能接受候选。脚本生成审阅材料和证据，不替代人工视觉判断，也不得修改候选；手写 review、缺 assessment/evidence、复用旧 review 或候选被覆盖后丢失历史 full snapshot 都失败。
+- 长边 256 和长边 160 两档中，商品、单一焦点和主轮廓可立即识别；保留文字时主文案仍可读，辅助信息不是理解画面的前提。缩放必须保持比例，不得裁切或拉伸；任一档失败即整张候选失败。
+
+失败时登记精确原因：`weak_single_focus`、`hero_occupancy_or_margin_fail`、`unsafe_crop`、`cluttered_hierarchy`、`material_unrealistic`、`scale_or_perspective_fail`、`lighting_or_shadow_fail`、`background_separation_fail`、`thumbnail_256_fail`、`thumbnail_160_fail`、`cheap_cliche` 或 `invented_claim`，并把该候选自己的 `passed=false` finalized review 登记进同一个 attempt record。从同一无参考纯生图阶段只针对失败轴重试；初次结果后最多 2 次。三次仍失败就报告失败，把终局拒绝候选归档到 `.xobi/work/rejected/` 并移出交付根目录，但所有历史 review、assessment、evidence、full snapshot 和缩略图继续保留且最终 verify 会逐条复算；不得把“内容没错但很丑”的候选登记为 success。
+
+主图批量按 family 先验收一张内部 pilot。pilot 的全尺寸/长边 256/长边 160 三档都通过后才并行该 family 其余成员；无需用户逐张确认。成员只沿用冻结的抽象艺术指导，不得引用 pilot 图片或串用其商品和文案。
+
 ## localization
 
 逐图并排检查 `source/pure_generation_candidate/final`。默认翻译没有 reference-edit、文字框本地合成或像素回填阶段；图片模型返回的是完整纯生图候选，通过全部验收后该候选本身才可成为 final 的视觉内容：
@@ -22,9 +40,9 @@
 - 无字区域继续无字；不得增加标语、参数、角标、底板、装饰、水印或伪字。包装/商品本体上的品牌和印刷文字只有用户明确点名才允许翻译。
 - 纯生图无法提供框外像素逐值相同的保证，因此不把像素相等冒充验收结论。可以用 OCR、感知差异、元素检测和接触表辅助发现漂移，但它们只能用于拒绝候选，不能用于本地修补候选。
 - 保持原比例时，画布、裁切和布局必须保持。用户明确新比例时，`allowed_changes` 只能包含 `minimal_canvas_adaptation`、`proportional_subject_scaling` 和 `necessary_text_reflow`，仍不得改变商品形状、背景风格、信息数量和层级；两项要求无法同时满足时必须在开工前确认，不能让失败候选替用户决定。
-- 通过验收的候选可复制、移动、重命名和登记哈希，但不得运行 `compose_localization.py`、本地文字蒙版、局部裁贴、像素回填或二次 AI 编辑。组合 Logo 任务只允许之后进入 [logo.md](logo.md) 的冲突处理和最终确定性 Logo 叠加。
+- 通过验收的候选可复制、移动、重命名和登记哈希，但不得运行 `compose_localization.py`、本地文字蒙版、局部裁贴、像素回填或二次 AI 编辑。接受该候选的同一次 update 必须立即封闭 `pure_generation` 图片阶段；组合 Logo 任务只允许之后进入 [logo.md](logo.md) 的冲突处理和最终确定性 Logo 叠加，不得再追加翻译 quality 或 infrastructure attempt。
 
-初次纯生图结果后最多 2 次针对性质量重试，每图共 3 个 `attempt_stage=pure_generation` quality attempts；其冻结计划模式始终是 `pure_generation_localization`。三次仍失败就报告失败；不得登记第 4 次成功，不得切到参考编辑，也不存在“参考编辑失败三次后才授权纯生图”的流程。
+初次纯生图结果后最多 2 次针对性质量重试，每图共 3 个 `attempt_stage=pure_generation` quality attempts；其冻结计划模式始终是 `pure_generation_localization`。候选一经接受就是该阶段最后一条 attempt 并立即封口。三次仍失败就报告失败；不得登记第 4 次成功，不得切到参考编辑，也不存在“参考编辑失败三次后才授权纯生图”的流程。
 
 ## Logo
 
@@ -40,6 +58,8 @@
 - 存在冲突重排的 family 先有合格 pilot，成员沿用方向、层级、module anchor 和间距；全 direct_overlay family 不强制 pilot；不同 family 不强行同版。
 - 所有比例使用同一短边公式；同批 Logo 可见视觉大小和左上角位置一致，未拉伸、裁切、模糊、重影或带意外白边。
 - 最终图与 `prepared_base + active Logo` 的锁定公式逐像素一致；PNG/BMP/TIFF 直接比较，JPEG/WebP 按固定编码参数重现后比较。叠加后没有再次交给 AI 或再次有损编码。
+- `direct_overlay` 不调用图片模型；最终 success 更新不传 `--attempts` 或 `--attempt-stage`，不得新建 attempt record，前序 attempts 总数和历史保持不变。
+- 只有真实信息冲突经冻结 plan/geometry/decision 证明，并实际调用图片模型重排时，才新增独立 `attempt_stage=logo_conflict` 图片 attempt；无冲突、`direct_overlay`、确定性叠加或单纯状态更新均不得增加 attempt。
 
 ## manifest 与批量完整性
 
@@ -66,8 +86,8 @@ python scripts/verify_manifest.py --manifest <任务目录/.xobi/manifest.json>
 ## 四路、重试与降级
 
 - worker 数是 `min(4, 可用槽位, task 数, 宿主并发上限)`；宿主明确不支持并行时直接为 1。
-- 图片工具只要返回任何可读取候选就计质量 attempt，不以“最终可验收”为计数前提；只有候选未通过验收才触发重试，每图每个执行阶段初次结果 + 2 次针对性重试，共最多 3 个，不触发全局降级。基础设施失败没有可读取候选，不占质量预算。
-- Localization 的图片调用必须连续登记唯一 attempt；验收通过的候选也占用当前阶段质量预算，禁止 0 次成功、重复、跳号、漏记或在三次失败后登记第 4 次成功。翻译计划模式始终是 `pure_generation_localization`，普通翻译调用阶段是 `pure_generation`。普通 generate/edit 的第一阶段由 manifest `image_model_policy` 锁定无参考纯生图，不使用 localization stage；任何模式进入真实 Logo 冲突时，都必须已有 active Logo、冻结的冲突 plan/geometry/decision、已接受前序 base 与绑定的 `conflict_reference_base`，再用后续唯一 attempt 登记 `logo_conflict`。无 Logo、direct_overlay、无冲突或首次 attempt 拒绝。最终确定性 Logo 叠加不增加图片 attempt。
+- 图片工具只要返回任何可读取候选就计质量 attempt，不以“最终可验收”为计数前提；commerce 主图的每个此类 attempt 还必须同时绑定由该候选三档证据 finalized 的 review。`logo_conflict` 的每个此类 attempt 必须传入并永久保留独立 `.xobi/work` `prepared_base`，由 manifest 记录并复核候选路径、SHA-256 与尺寸，不得复用路径或哈希；accepted pending/success 还必须同次通过 relocation/pixel-lock，并在 item 与 attempt 保存完全相同的可复算证据。只有候选未通过验收才触发重试，每图每个执行阶段初次结果 + 2 次针对性重试，共最多 3 个，不触发全局降级。基础设施失败没有可读取候选，不占质量预算，也不得伪造 candidate、review、prepared_base、output 或其他候选产物。
+- Localization 的图片调用必须连续登记唯一 attempt；验收通过的候选也占用当前阶段质量预算，并在接受时立即封闭 `pure_generation` 阶段，禁止 0 次成功、重复、跳号、漏记、接受后补记质量/基础设施 attempt 或在三次失败后登记第 4 次成功。翻译计划模式始终是 `pure_generation_localization`，普通翻译调用阶段是 `pure_generation`。普通 generate/edit 的第一阶段由 manifest `image_model_policy` 锁定无参考纯生图，不使用 localization stage；任何模式进入真实 Logo 冲突时，都必须已有 active Logo、冻结的冲突 plan/geometry/decision、已接受前序 base 与绑定的 `conflict_reference_base`，再为实际图片模型重排登记后续独立 `logo_conflict` attempt。无 Logo、`direct_overlay`、无冲突、确定性叠加、最终 success 更新或首次图片 attempt 都拒绝该阶段并不得增加 attempt。主图或 Logo 冲突候选一旦验收通过，对应图片阶段同样立即封口。
 - 新 localization 不接受 `attempt_stage=reference_edit`、`pure_rebuild_approval` 或 `localization_execution_stage=pure_rebuild`。这些字段仅可出现在 v1-v3 旧 manifest 的只读兼容验证中；旧 manifest 不能新增 update/attempt，继续执行前必须迁移到当前纯生图策略。
 - 基础设施问题：没有可用候选的限流、连接、附件或落盘错误，初次调用后最多重试 3 次，依次等待 2/5/10 秒，每个执行阶段总计最多 4 个 infrastructure attempts。混合质量/基础设施失败分别计数；每次图片调用只归入一个结果类别，并保留不归零的总调用序号。
 - 两个 worker 出现同类基础设施错误：取消尚未执行的并行退避重试，停止派发新 task，选择最早的受影响 pending task，以该 task 的冻结 prompt、无参考输入策略和隔离输出做一次单路探针；只有 `logo_conflict` 探针沿用其唯一底图参考。探针失败计入该 task 的 infrastructure budget；探针成功产生的候选计入该阶段 quality budget并正常验收，然后降为 1 路补 pending。不得创建无 task 归属的探针。
@@ -76,7 +96,7 @@ python scripts/verify_manifest.py --manifest <任务目录/.xobi/manifest.json>
 
 ## 联系表
 
-普通批次查看最终图总览；翻译按 source/pure_generation_candidate/final，Logo 按 source/conflict_reference_base/prepared_base/final 分阶段查看：
+普通批次查看最终图总览；主图另看全尺寸/长边 256/长边 160 review，翻译按 source/pure_generation_candidate/final，Logo 按 source/conflict_reference_base/prepared_base/final 分阶段查看：
 
 ```text
 python scripts/create_contact_sheet.py --manifest <manifest> --output <.xobi/work/source-base-final.jpg>

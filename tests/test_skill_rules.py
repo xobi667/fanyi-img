@@ -15,6 +15,7 @@ PROMPTS = REFERENCES / "prompts.md"
 QUALITY = REFERENCES / "quality.md"
 RUNTIMES = REFERENCES / "runtimes.md"
 LOGO = REFERENCES / "logo.md"
+MAIN_IMAGE = REFERENCES / "main-image.md"
 
 LOCALIZATION_POLICY_FILES = (SKILL, LOCALIZATION, WORKFLOW, RUNTIMES)
 CONCURRENCY_POLICY_FILES = (SKILL, WORKFLOW, QUALITY, RUNTIMES)
@@ -65,6 +66,7 @@ class SkillRuleRegressionTests(unittest.TestCase):
             QUALITY,
             RUNTIMES,
             LOGO,
+            MAIN_IMAGE,
         }
         for path in sorted(required):
             with self.subTest(path=path.relative_to(REPO_ROOT)):
@@ -182,11 +184,89 @@ class SkillRuleRegressionTests(unittest.TestCase):
         self.assertIn("1036 x 309", text)
         self.assertIn("/ 4000", text)
 
+    def test_logo_conflict_candidates_are_evidence_bound_and_stage_closed(self) -> None:
+        combined = "\n".join((read_utf8(SKILL), read_utf8(LOGO), read_utf8(QUALITY)))
+
+        for marker in ("candidate_path", "SHA-256", "candidate_width", "candidate_height"):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, combined)
+        self.assertRegex(
+            combined,
+            re.compile(r"基础设施.{0,160}(?:禁止|不得).{0,80}(?:prepared_base|候选产物)", re.DOTALL),
+        )
+        self.assertRegex(
+            combined,
+            re.compile(r"(?:验收通过|accepted).{0,100}(?:阶段).{0,40}(?:封口|封闭)", re.DOTALL),
+        )
+        self.assertRegex(
+            combined,
+            re.compile(r"accepted.{0,180}(?:同一次|同次).{0,120}logo_relocation_validation", re.IGNORECASE | re.DOTALL),
+        )
+
     def test_gate_asks_only_for_missing_information(self) -> None:
         for path in (SKILL, WORKFLOW):
             text = read_utf8(path)
             with self.subTest(path=path.relative_to(REPO_ROOT)):
                 self.assertIn("缺什么只问什么", text)
+
+    def test_commerce_main_image_is_explicit_and_cannot_expand_translation(self) -> None:
+        skill_text = read_utf8(SKILL)
+        main_image = read_utf8(MAIN_IMAGE)
+        localization = read_utf8(LOCALIZATION)
+
+        for text in (skill_text, main_image):
+            self.assertRegex(text, re.compile(r"只有用户明确要求.{0,80}(?:做|制作|重做|优化).{0,30}主图", re.DOTALL))
+            self.assertIn("commerce_main_image", text)
+        self.assertRegex(main_image, re.compile(r"翻译主图.{0,180}(?:不启用|禁止借主图规则美化)", re.DOTALL))
+        self.assertRegex(localization, re.compile(r"只翻译|唯一(?:允许的|授权)内容变化", re.DOTALL))
+
+    def test_commerce_main_image_gate_and_art_direction_are_frozen(self) -> None:
+        main_image = read_utf8(MAIN_IMAGE)
+        required = (
+            "platform_profile",
+            "visual_direction",
+            "output_ratio",
+            "text_policy",
+            "product_content_lock",
+            "single_focus",
+            "hero_occupancy",
+            "safe_margin",
+            "information_hierarchy",
+            "camera_and_scale",
+            "lighting_and_shadow",
+            "material_response",
+            "background_and_color",
+            "forbidden_patterns",
+        )
+        for field in required:
+            with self.subTest(field=field):
+                self.assertIn(field, main_image)
+        self.assertRegex(main_image, re.compile(r"第一次图片调用前.{0,200}(?:确认|冻结)", re.DOTALL))
+        self.assertRegex(main_image, re.compile(r"缺什么只问什么", re.DOTALL))
+
+    def test_commerce_main_image_prompt_and_thumbnail_quality_gate_are_hard(self) -> None:
+        prompts = read_utf8(PROMPTS)
+        quality = read_utf8(QUALITY)
+        main_image = read_utf8(MAIN_IMAGE)
+        combined = "\n".join((prompts, quality, main_image))
+
+        self.assertIn("PURE GENERATION COMMERCE MAIN IMAGE", prompts)
+        self.assertIn("REFERENCE INPUT: NONE", prompts)
+        self.assertIn("PRODUCT AND CONTENT LOCK", prompts)
+        self.assertIn("TEXT POLICY", prompts)
+        for marker in ("黄黑", "红角标", "粗描边", "椭圆贴片", "拥挤拼贴", "过饱和", "编造"):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, combined)
+        self.assertIn("create_main_image_review.py", combined)
+        self.assertRegex(combined, re.compile(r"全尺寸.{0,120}256.{0,120}160", re.DOTALL))
+        self.assertRegex(quality, re.compile(r"审美不合格.{0,80}quality failure", re.IGNORECASE | re.DOTALL))
+        self.assertIn("full-original", main_image)
+        self.assertIn("passed=false", main_image)
+        self.assertRegex(
+            combined,
+            re.compile(r"每个.{0,40}(?:有候选|候选).{0,40}attempt.{0,100}review", re.IGNORECASE | re.DOTALL),
+        )
+        self.assertRegex(combined, re.compile(r"assessment.{0,80}evidence", re.IGNORECASE | re.DOTALL))
 
     def test_concurrency_backoff_and_single_worker_fallback_are_locked(self) -> None:
         single_worker = re.compile(r"workers\s*=\s*1|降为\s*1(?:\s*路)?")

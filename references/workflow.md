@@ -7,6 +7,7 @@
 | generate | 生成目标、输出比例 | 用途、风格、色彩、精确文字、变体数 |
 | edit | 目标图、修改项、输出比例/保持原比例 | 精确尺寸、素材角色 |
 | localization | 源图、目标语言、输出比例/保持原比例 | 术语偏好、模糊文字 |
+| commerce_main_image | 明确制作/重做/优化整张主图、目标商品/素材、平台或通用电商、视觉方向、比例、文字策略 | 平台硬规范、精确文案、变体数 |
 | 添加 Logo | 目标图、本次 active Logo 资产、输出比例/保持原比例 | 外围边清理方式、精确尺寸 |
 | batch | 单图模式必填项、整批操作 | 是否显式统一全批视觉 |
 
@@ -31,6 +32,7 @@
 - generate、edit 和 localization 全部默认调用无参考图的原生纯生图。协调者可以查看源图、盘点文字和视觉内容，但图片模型调用不传 target、source、reference、附件、最近会话图片或任何隐式图片上下文。
 - edit 执行 `pure_generation_edit`，整张重建但只允许用户点名项变化；其余商品、文字、对象、数量、背景、位置和版式锁定。
 - localization 执行 `pure_generation_localization`，整张重建但只允许把已有文字替换为译文；商品、内容、数量、背景和版式锁定。
+- `commerce_main_image` 只在用户明确要求制作、重做或优化整张主图时启用；无输入仍以 generate、有输入仍以 edit 预检，但用冻结艺术指导授权创意呈现。单独翻译和普通 edit 不得升级到该 route。
 - 图片模型返回完整候选。候选通过验收后直接作为成品视觉内容；除 Logo 最后一步确定性叠加外，不使用本地蒙版、裁贴、文字框合成或像素回填。
 - 只有用户明确要求添加 Logo 并确认本次 `logo` 资产时才启用 Logo 例外；源图已有 Logo 或盘点时发现 Logo 都不算。该添加任务中唯一的参考编辑例外是 Logo 冲突底图：本次 active Logo 会遮挡信息模块时，可把尚未叠加本次 active Logo 的 `conflict_reference_base` 作为唯一参考，只重排冲突模块；源图原有 Logo 仍必须保留。
 
@@ -80,6 +82,36 @@ generate 不传 `--input`，也不允许 `original`/“保持原比例”或 `--
 
 generate 可登记本次 active Logo，但该资产只供后续冲突判断和确定性叠加，绝不作为纯生图参考，也不得出现在第一阶段生成内容中。先验收“尚未叠加本次 active Logo”的生成 base，再执行 Logo 流程。
 
+## commerce_main_image
+
+只在用户明确要求“做主图”“重做主图”或“优化主图”等整张主图任务时读取并执行 [main-image.md](main-image.md)。用户只说“翻译主图”、修改一处、换背景或泛称“优化图片”时不走该 route。
+
+1. 只读查看目标商品与素材，确认平台或“通用电商”、视觉方向、比例和文字策略；缺什么只问什么。
+2. 无输入使用基础 `mode=generate`，有输入使用基础 `mode=edit`；manifest 另写 `workflow=commerce_main_image`，并在操作摘要、独立主图计划与报告中记录同一 workflow，不混淆基础 mode 与创意 workflow。
+3. 冻结商品内容锁与艺术指导：单一焦点、商品优先、商品占比/安全边距、最少信息层、构图、尺度/透视、真实材质、光影/接触阴影、背景/色彩、保持比例长边 256/160 缩略图门禁和禁用样式。
+4. 使用 `PURE GENERATION COMMERCE MAIN IMAGE` prompt 调用原生图片模型；不得传 source、target、asset、style/layout reference、最近会话图片或 pilot 图片。
+5. 按 [main-image.md](main-image.md) 的真实 CLI 对 manifest 预分配 final 路径运行 `scripts/create_main_image_review.py`，把候选原始字节冻结为独立 full snapshot，再检查全尺寸/保持比例长边 256/保持比例长边 160 三档并绑定当前 candidate、冻结 plan、evidence 和 assessment。每个有候选的 attempt 都必须在同一次 update 中登记自己的 finalized review；任一审美项不合格就是带 `passed=false` review 的 quality failure，按精确原因最多针对性重试 2 次，不得因为商品和文字内容正确就通过丑图。
+6. 批量按平台、比例、品类、视觉方向和文字策略分 family。每个 family 先做一张内部 pilot，三档验收通过后再并行其他成员；不要求用户逐张确认，也不把 pilot 图片作为参考。
+
+无输入与有输入分别使用真实 preflight 参数；`--exact-text` 只随 `user_exact` 使用，`preserve_existing_exact` 只可用于有输入的 edit：
+
+```text
+python scripts/preflight_images.py --mode generate --workflow commerce_main_image --operation <明确制作/重做/优化主图摘要> --ratio <比例|宽×高> --platform-profile <平台|通用电商> --visual-direction <视觉方向> --text-policy <no_text|user_exact> [--exact-text <用户精确文案>] [--variants <数量>]
+python scripts/preflight_images.py --input <目标图|目录|ZIP> --mode edit --workflow commerce_main_image --operation <明确制作/重做/优化主图摘要> --ratio <比例|宽×高|original> --platform-profile <平台|通用电商> --visual-direction <视觉方向> --text-policy <no_text|preserve_existing_exact|user_exact> [--exact-text <用户精确文案>]
+```
+
+plan 登记、三档 review 与 success 绑定固定按以下真实顺序；不得省略或合并 attempts=0 的独立 pending plan 更新。`--attempts` 使用当前全局总值加 1，不是固定候选序号；质量候选仍最多 3 个。失败 attempt 命令和 assessment 结构见 [main-image.md](main-image.md)：
+
+```text
+python scripts/update_manifest.py --manifest <任务目录/.xobi/manifest.json> --task-id <task_id> --status pending --worker-id <worker_id> --main-image-plan-json <已冻结main_image_plan.json>
+python scripts/create_main_image_review.py prepare --manifest <任务目录/.xobi/manifest.json> --task-id <task_id> --candidate <manifest预分配final路径> --plan-json <已冻结main_image_plan.json> [--output-dir <.xobi/work/独立证据目录>]
+python scripts/create_main_image_review.py finalize --manifest <任务目录/.xobi/manifest.json> --task-id <task_id> --candidate <manifest预分配final路径> --plan-json <已冻结main_image_plan.json> --evidence-dir <prepare输出目录> --assessment-json <已填写的绑定模板.json> [--review-json <evidence-dir内review.json>]
+python scripts/update_manifest.py --manifest <任务目录/.xobi/manifest.json> --task-id <task_id> --status <pending|failed> --worker-id <worker_id> --attempts <当前总attempt+1> --attempt-stage commerce_main_image --failure-type quality --error <精确失败原因> --main-image-quality-review-json <passed=false的review.json>
+python scripts/update_manifest.py --manifest <任务目录/.xobi/manifest.json> --task-id <task_id> --status success --worker-id <worker_id> --output <manifest预分配final路径> --attempts <当前总attempt+1> --attempt-stage commerce_main_image --main-image-quality-review-json <通过的review.json>
+```
+
+用户明确要求添加 Logo 时，先把尚未叠加 active Logo 的通过候选以 pending commerce attempt 同时绑定 `passed=true` review 和 `--base-output`，再进入原有 Logo 流程；该 accepted commerce attempt 立即封闭主图图片阶段，禁止再追加主图 quality/infrastructure attempt。Logo 完成时沿用该冻结 review，不重新传主图 review。Logo 的唯一参考例外和确定性叠加规则不变。
+
 ## edit
 
 1. 查看目标图，逐项记录主体、商品、照片、人物、图标、Logo、文字、数量、边框、背景、光线、阴影、裁切、位置和布局。
@@ -99,8 +131,8 @@ generate 可登记本次 active Logo，但该资产只供后续冲突判断和�
 2. 在 attempts=0 时为每个 task 落盘并登记独立 `.xobi/work/<task_id>-localization-plan.json`，固定 `mode=pure_generation_localization`、`reference_policy=none`、逐块译文和完整内容锁。
 3. 使用 `PURE GENERATION LOCALIZATION` prompt 调用原生图片模型，不传源图、参考图或最近会话图片；返回完整 `.xobi/work/pure-generation-candidate-*`。
 4. 把 source/candidate 并排查看，逐字核对译文，并逐项核对所有非文字内容、数量、商品、背景、位置、构图和版式。候选只要出现额外变化就失败。
-5. 验收通过的完整候选直接成为 final 的视觉内容；允许复制、移动、重命名和登记哈希，不得运行 `compose_localization.py`、文字框蒙版、局部裁贴、像素回填或第二次 AI 编辑。
-6. 每次图片调用连续登记 `attempt_stage=pure_generation`。初次结果后最多 2 次针对性重试，每图共 3 个 quality attempts；三次仍失败就停止并报告，不能登记第 4 次成功。
+5. 验收通过的完整候选直接成为无 Logo final 的视觉内容，或登记为组合 Logo 任务的 `localized_base`；接受更新立即封闭该 task 的 `pure_generation` 图片阶段，后续不得再追加该阶段的 quality 或 infrastructure attempt。允许复制、移动、重命名和登记哈希，不得运行 `compose_localization.py`、文字框蒙版、局部裁贴、像素回填或第二次 AI 编辑。
+6. 每次图片调用连续登记 `attempt_stage=pure_generation`。初次结果后最多 2 次针对性重试，每图共 3 个 quality attempts；被接受的候选是该阶段最后一条 attempt，三次仍失败就停止并报告，不能登记第 4 次成功。
 
 不存在“先参考编辑三次，再取得纯生图授权”的流程；`text_only_reference_edit`、`pure_rebuild_approval` 和 composition provenance 只允许离线读取、验证、诊断或导出旧 manifest。旧任务不得新增 reference-edit/pure-rebuild 图片 attempt；要继续处理必须迁移到当前无参考纯生图策略。
 
@@ -113,10 +145,10 @@ generate 可登记本次 active Logo，但该资产只供后续冲突判断和�
 1. 看完全部目标图并确认本次 Logo 资产、角色和哈希；只有用户明确要求时才允许默认模板。必要时先 dry-run 清理外围边，正式清理登记规范化谱系。
 2. 对每张最终尺寸运行 `apply_logo.py --dry-run --geometry-json ...`，用 `visible_bbox` 判断真实冲突。
 3. 仅添加 Logo 时，源图或用户明确要求的确定性尺寸/格式转换结果直接作为待叠加 base，不先运行 `pure_generation_edit`。组合任务只有在还要求生成、普通编辑或翻译时，才先完成对应的无参考纯生图阶段；第一阶段禁止生成本次 active Logo。
-4. 无冲突时 Logo 阶段不调用图片模型，直接把合格底图记录为 `prepared_base`；有冲突时写 `logo_plan.json` 和 layout family，把尚未叠加本次 active Logo 的底图登记为 `conflict_reference_base`。
-5. `logo_conflict` 是唯一参考编辑例外：只把 `conflict_reference_base` 作为参考，只移动冲突信息模块。存在冲突的 family 先验收 pilot，再冻结布局并处理成员。
-6. 运行逐模块 relocation guard，确认原位清除、目标位对应，且其他区域无变化；合格结果记录为 `prepared_base`。
-7. 使用本次真实 Logo 资产做最后一步确定性叠加。叠加后禁止再次交给 AI；生成 source/conflict_reference_base/prepared_base/final 对照表并验收。
+4. 无冲突时 Logo 阶段不调用图片模型，直接把合格底图记录为 `prepared_base` 并执行 `direct_overlay`；最终 success 更新不传 `--attempts` 或 `--attempt-stage`，不生成 attempt record，保留前序 attempts 总数。有冲突时写 `logo_plan.json` 和 layout family，把尚未叠加本次 active Logo 的底图登记为 `conflict_reference_base`。
+5. `logo_conflict` 是唯一参考编辑例外：只有真实冲突门禁通过且实际调用图片模型重排时，才用当前全局 attempt 加 1 登记独立 `attempt_stage=logo_conflict`。只把 `conflict_reference_base` 作为参考，只移动冲突信息模块。存在冲突的 family 先验收 pilot，再冻结布局并处理成员。每个可读候选传入并永久保留该次唯一的 `.xobi/work` `--prepared-base`；不得复用路径或 SHA-256。没有候选的 infrastructure attempt 禁止夹带 prepared/output 等候选产物。无冲突、`direct_overlay`、确定性叠加和最终 success 更新都不得增加图片 attempt。
+6. 运行逐模块 relocation guard，确认原位清除、目标位对应，且其他区域无变化；合格结果记录为 `prepared_base`。候选登记为 accepted pending/success 时必须在同一次 update 复算并把完全相同的 `logo_relocation_validation` 绑定到 item 与 attempt，不能等最终叠加后补验。候选通过后 Logo 图片阶段立即封口。
+7. 使用本次真实 Logo 资产做最后一步确定性叠加；这一步无论接在 `direct_overlay` 还是 `logo_conflict` 后都不增加图片 attempt。叠加后禁止再次交给 AI；生成 source/conflict_reference_base/prepared_base/final 对照表并验收。
 
 ```text
 python scripts/normalize_logo.py --input <原始Logo> --output <.xobi/work/normalized-logo.png> --background <white|solid|transparent> --metadata-json <.xobi/work/logo-normalization.json> --manifest <.xobi/manifest.json>
@@ -136,7 +168,7 @@ python scripts/preflight_images.py --input <路径> --mode <edit|localization> -
 - PSD/PSB 写入 `unsupported_inputs` 并跳过，不偷偷转换、不安装强制依赖。
 - 每个 task 完成后通过 `update_manifest.py` 写独立 state 并在锁内合并；禁止直接改共享 JSON。
 
-Localization 计划登记发生在任何图片 attempt 之前；success 不得首次传计划，候选返回后不得扩大授权或改写译文。新任务的计划模式固定为 `pure_generation_localization`，普通翻译图片调用只使用 `attempt_stage=pure_generation`，不使用 `reference_edit`、`pure_rebuild` 或 `--pure-rebuild-approval`。普通 generate/edit 的第一阶段由 manifest `image_model_policy` 锁定为无参考纯生图，不使用 localization 专属 stage；任何模式真实进入 Logo 冲突时，必须在独立 pending 更新中先冻结 plan、geometry、decision、前序已接受 base 与 `conflict_reference_base`，再用后续唯一 attempt 登记 `attempt_stage=logo_conflict`。无 Logo、direct_overlay、无真实冲突和首次 attempt 都拒绝。
+Localization 计划登记发生在任何图片 attempt 之前；success 不得首次传计划，候选返回后不得扩大授权或改写译文。新任务的计划模式固定为 `pure_generation_localization`，普通翻译图片调用只使用 `attempt_stage=pure_generation`，不使用 `reference_edit`、`pure_rebuild` 或 `--pure-rebuild-approval`。翻译候选一经接受，`pure_generation` 阶段立即封口，不得追加质量或基础设施 attempt。普通 generate/edit 的第一阶段由 manifest `image_model_policy` 锁定为无参考纯生图，不使用 localization 专属 stage；任何模式真实进入 Logo 冲突时，必须在独立 pending 更新中先冻结 plan、geometry、decision、前序已接受 base 与 `conflict_reference_base`，再用后续独立 attempt 登记 `attempt_stage=logo_conflict`。只有实际调用图片模型的真实 `logo_conflict` 重排才增加该 attempt；无 Logo、`direct_overlay`、无真实冲突、确定性叠加和最终 success 更新都不增加 attempt。
 
 success 必须验证文件存在、位于任务根目录、不是源图/Logo、路径唯一、扩展名与真实编码一致、透明契约、比例/尺寸正确，并记录 SHA-256；不同 task 的最终输出路径和内容哈希不得重复。
 
@@ -144,7 +176,7 @@ success 必须验证文件存在、位于任务根目录、不是源图/Logo、�
 
 1. 宿主明确禁止并行：开工即 `workers=1`。
 2. 否则使用 `min(4, slots, tasks, host_limit)`；各 worker 只处理自己的 task，内部逐张串行。
-3. Logo 同系列只有存在冲突重排时才进入 pilot 屏障；全为 direct_overlay 的系列无需 pilot。其他模式只有用户明确要求共享布局或风格时才设置相应屏障。
+3. Logo 同系列只有存在冲突重排时才进入 pilot 屏障；全为 direct_overlay 的系列无需 pilot。`commerce_main_image` 批量始终按 family 先过内部 pilot 再并行；其他模式只有用户明确要求共享布局或风格时才设置相应屏障。
 4. 返回候选即计该阶段 quality attempt；未通过时只对当前图做最多 2 次针对性重试。没有候选的基础设施错误独立计数，初次调用后最多重试 3 次并等待 2/5/10 秒。
 5. 两个 worker 出现同类基础设施错误后，取消尚未执行的并行退避重试并暂停派发；选择最早受影响的 pending task，沿用其冻结 prompt 和隔离输出做一次单路探针。探针按实际结果计入该 task，禁止无归属调用。
 6. 探针成功并验收后记录降级，`workers=1` 补 pending；探针失败则保留已成功项并报告。
@@ -154,8 +186,9 @@ success 必须验证文件存在、位于任务根目录、不是源图/Logo、�
 
 - `batch_style_lock`：只有用户明确要求整批视觉统一时启用，约束全批抽象视觉规范。
 - `layout_family_lock`：自动识别两张以上同系列时启用，只约束该系列的标题方向、层级、模块关系和间距。
+- `main_image_family`：`commerce_main_image` 按平台、比例、品类、视觉方向和文字策略自动划分；每个 family 先有内部 pilot，再把已验收的抽象艺术指导传给成员。
 
-两者互不替代。只有 Logo 冲突重排 family 先 pilot 再并行；全为 direct_overlay 的 family 不设 pilot。不同 family 不共享商品、文案、局部构图或图片上下文。
+这些锁互不替代。Logo 冲突重排 family 与主图 family 分别按自己的规则先 pilot 再并行；全为 direct_overlay 的 Logo family 不设 pilot。不同 family 不共享商品、文案、局部构图或图片上下文。
 
 ## 最终验收与交付
 
@@ -165,3 +198,5 @@ python scripts/verify_manifest.py --manifest <.xobi/manifest.json>
 ```
 
 翻译联系表使用 source/pure_generation_candidate/final；Logo 联系表使用 source/conflict_reference_base/prepared_base/final，direct_overlay 可省略与 source/base 重复的列。只有验证通过才能声称“全部完成、无遗漏、无重复”。交付 ZIP 只包含任务根目录最终成品，排除 `.xobi/`。只有用户明确要求额外尺寸、格式或体积转换时才执行对应本地工具；不得把后处理当默认图片生产方式，也不得借后处理改变视觉布局。
+
+`commerce_main_image` 还必须保留 `scripts/create_main_image_review.py` 生成并绑定的全尺寸/保持比例长边 256/保持比例长边 160 review 证据；三档都通过后才能交付。

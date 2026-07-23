@@ -1,4 +1,17 @@
-# xobi-img Localization Glossary
+# xobi-img Localization 与主图术语
+
+## commerce_main_image 术语
+
+- `commerce_main_image`：只有用户明确要求制作、重做或优化整张电商主图时启用的 creative route；不是翻译或普通 edit 的别名。
+- `platform_profile`：用户点名的平台，或用户明确选择的“通用电商”。未确认时不得静默套用平台规范。
+- `visual_direction`：冻结的整体视觉意图，至少能指导构图、光线、材质、色彩和背景；“好看一点”不足以成为可执行方向，需只追问该缺项。
+- `text_policy`：`no_text`、`preserve_existing_exact` 或 `user_exact`。`no_text` 只禁止新增主图营销文案，商品/包装本体上已锁定的品牌和印刷文字仍保留；任何模式都禁止编造卖点、参数、认证、折扣、评分或赠品。
+- `single_focus`：缩略图第一眼只有一个主焦点，且必须是商品；文字、道具和装饰只能从属。
+- `hero_occupancy`：商品视觉包围盒在画布中的目标占比。通用电商默认沿主轴约 `65%–85%`，但平台、品类或冻结视觉方向可在 plan 中给出覆盖值。
+- `safe_margin`：商品、关键文字与裁切边之间的最小安全距离；通用电商默认不少于画布短边 `5%`，平台规范优先。
+- `main_image_family`：平台、比例、品类、视觉方向和文字策略相同的一组主图任务；先过一张内部 pilot，再并行成员。
+- `thumbnail gate`：对同一候选原始字节冻结的独立 full snapshot、保持比例长边 `256px`、保持比例长边 `160px` 三档视觉验收；缩略图不裁切、不拉伸，是审阅证据而不是替代成品。每个有候选的主图 attempt 都有自己的 finalized review，历史证据不随 final 路径被下一次重试覆盖。
+- `cheap commercial cliche`：廉价黄黑促销条、随机红角标、粗描边、椭圆贴片、拥挤拼贴、廉价伪 3D 文字/按钮/漂浮图标、过饱和等禁用表达。
 
 ## 语言风格
 

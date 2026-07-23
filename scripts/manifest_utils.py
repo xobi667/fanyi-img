@@ -24,6 +24,8 @@ TERMINAL_STATUSES = {"success", "skipped", "failed"}
 LEGACY_SOURCE_SCHEMA_VERSIONS = {1, 2, 3}
 PURE_GENERATION_LOCALIZATION_MODE = "pure_generation_localization"
 LEGACY_REFERENCE_LOCALIZATION_MODE = "text_only_reference_edit"
+COMMERCE_MAIN_IMAGE_WORKFLOW = "commerce_main_image"
+COMMERCE_MAIN_IMAGE_ATTEMPT_STAGE = "commerce_main_image"
 CURRENT_IMAGE_MODEL_POLICY = {
     "default": "pure_generation",
     "reference_images_allowed": False,
@@ -39,6 +41,125 @@ PURE_GENERATION_RATIO_ALLOWED_CHANGES = frozenset({
     "proportional_subject_scaling",
     "necessary_text_reflow",
 })
+COMMERCE_MAIN_IMAGE_PLAN_FIELDS = frozenset({
+    "schema_version",
+    "contract",
+    "task_id",
+    "creative_route",
+    "platform_profile",
+    "visual_direction",
+    "output_ratio",
+    "text_policy",
+    "exact_text",
+    "existing_text_inventory",
+    "product_content_lock",
+    "single_focus",
+    "hero_occupancy",
+    "safe_margin",
+    "information_hierarchy",
+    "composition",
+    "camera_and_scale",
+    "lighting_and_shadow",
+    "material_response",
+    "background_and_color",
+    "thumbnail_requirements",
+    "forbidden_patterns",
+    "source",
+    "source_sha256",
+    "output",
+    "operation",
+})
+COMMERCE_MAIN_IMAGE_REVIEW_CRITERIA = frozenset({
+    "single_focal_point",
+    "product_priority",
+    "clear_information_hierarchy",
+    "safe_margins",
+    "realistic_material_scale_and_shadow",
+    "thumbnail_readability",
+    "typography_quality",
+    "commercial_polish",
+    "no_cheap_collage_or_decorations",
+    "no_invented_claims",
+})
+COMMERCE_MAIN_IMAGE_REVIEW_SCORES = frozenset({
+    "visual_hierarchy",
+    "product_fidelity",
+    "material_realism",
+    "typography",
+    "spacing",
+    "commercial_polish",
+    "thumbnail_readability",
+})
+COMMERCE_MAIN_IMAGE_HARD_REJECTS = frozenset({
+    "cheap_banner",
+    "random_badge",
+    "thick_outline",
+    "oval_sticker_collage",
+    "clutter",
+    "fake_3d",
+    "oversaturation",
+    "invented_claim",
+})
+COMMERCE_MAIN_IMAGE_ASSESSMENT_CHECKS = frozenset({
+    "single_focal_point",
+    "product_priority",
+    "clear_hierarchy",
+    "safe_margins",
+    "realistic_scale_and_shadow",
+    "no_invented_claims",
+})
+COMMERCE_MAIN_IMAGE_REVIEW_KEYS = frozenset({
+    "schema_version",
+    "producer",
+    "contract",
+    "manifest_id",
+    "task_id",
+    "source",
+    "source_sha256",
+    "operation",
+    "output",
+    "plan",
+    "thumbnail_sizes",
+    "views",
+    "criteria",
+    "scores",
+    "hard_rejects",
+    "passed",
+    "reviewer",
+    "notes",
+    "assessment",
+    "evidence",
+})
+COMMERCE_MAIN_IMAGE_EVIDENCE_KEYS = frozenset({
+    "schema_version",
+    "producer",
+    "contract",
+    "manifest_id",
+    "task_id",
+    "source",
+    "source_sha256",
+    "operation",
+    "candidate",
+    "plan",
+    "thumbnail_sizes",
+    "views",
+})
+COMMERCE_MAIN_IMAGE_ASSESSMENT_KEYS = frozenset({
+    "schema_version",
+    "producer",
+    "contract",
+    "manifest_id",
+    "task_id",
+    "operation",
+    "candidate",
+    "plan",
+    "views",
+    "scores",
+    "required_checks",
+    "hard_rejects",
+    "reviewer",
+    "notes",
+})
 
 
 def is_legacy_read_only_manifest(data: dict[str, Any]) -> bool:
@@ -52,6 +173,186 @@ def is_legacy_read_only_manifest(data: dict[str, Any]) -> bool:
         "migration_required_for_new_attempts": True,
     }
     return source_version in LEGACY_SOURCE_SCHEMA_VERSIONS and compatibility == expected
+
+
+def operation_authorizes_commerce_main_image(operation: str) -> bool:
+    """Require an explicit creative main-image instruction, not a mere mention or review."""
+    normalized = unicodedata.normalize("NFC", str(operation or "")).casefold().strip()
+    chinese_action = r"(?:重新制作|重新设计|重新做|制作|创建|创作|设计|生成|重做|优化|改造|提升|美化|重构|做)"
+    chinese_creation_action = r"(?:重新制作|重新设计|重新做|制作|创建|创作|设计|生成|重做|做)"
+    chinese_subject_prefix = r"(?:电商(?:商品|产品)?|商品|产品|平台)"
+    chinese_subject = r"(?:" + chinese_subject_prefix + r"的?)?主图"
+    chinese_local = (
+        r"(?:文字|文案|背景|logo|标志|角落|左上角|右上角|左下角|右下角|某一处|局部|"
+        r"颜色|色调|清晰度|清晰|画质|分辨率|阴影|反射|高光|小图|图标|二维码|边框|"
+        r"排版|字体|字号|字距|行距|间距|位置|裁切|尺寸|大小|比例|格式|体积|压缩)"
+    )
+    chinese_full = (
+        r"(?:整张|整体|(?:全新|完整)(?:的)?(?:"
+        + chinese_subject_prefix
+        + r"的?)?主图)"
+    )
+    chinese_negative = r"(?:不要|无需|不需要|禁止|别|并非要|不是要|不想)"
+    chinese_advice = r"(?:如何|怎么|怎样|教程|方法|思路|建议|方案|可行性|提案)"
+    chinese_review = r"(?:检查|查看|看看|对比|比较|评估|审核|审查|分析|评价|复盘)"
+    chinese_completed = r"(?:已经|已|刚刚|刚|完成(?:了)?|做完(?:了)?)"
+    chinese_translation = r"(?:翻译|译成|译为|本地化|转成.{0,12}(?:语|文))"
+    for clause in re.split(r"[。！？!?；;，,\r\n]+", normalized):
+        if not clause.strip():
+            continue
+        if re.search(chinese_translation, normalized):
+            continue
+        authorized_pair = False
+        for action_match in re.finditer(chinese_action, clause):
+            action_suffix = clause[action_match.end():action_match.end() + 12]
+            if re.match(
+                r"(?:了|过(?:的)?|好(?:了|的)?|完(?!整|全)(?:了|的)?|完成(?:了|的)?|后(?:的)?|的)",
+                action_suffix,
+            ):
+                continue
+            for subject_match in re.finditer(chinese_subject, clause):
+                if action_match.end() <= subject_match.start():
+                    distance = subject_match.start() - action_match.end()
+                elif subject_match.end() <= action_match.start():
+                    distance = action_match.start() - subject_match.end()
+                else:
+                    distance = 0
+                if distance > 96:
+                    continue
+                action_prefix = clause[max(0, action_match.start() - 48):action_match.start()]
+                subject_to_action = (
+                    clause[subject_match.end():action_match.start()]
+                    if subject_match.end() <= action_match.start()
+                    else ""
+                )
+                if re.search(chinese_negative, action_prefix) or re.search(
+                    chinese_negative, subject_to_action
+                ):
+                    continue
+                if re.search(chinese_review + r".{0,8}$", action_prefix):
+                    continue
+                if re.search(chinese_completed + r".{0,2}$", action_prefix) or re.search(
+                    chinese_completed, subject_to_action
+                ):
+                    continue
+                authorized_pair = True
+                break
+            if authorized_pair:
+                break
+        if not authorized_pair:
+            continue
+        if re.search(chinese_advice + r".{0,48}" + chinese_action, clause) or re.search(
+            chinese_action + r".{0,96}" + chinese_subject + r".{0,24}" + chinese_advice,
+            clause,
+        ):
+            continue
+        creates_whole_with_local = bool(
+            re.search(
+                chinese_creation_action
+                + r".{0,48}(?:带|包含|使用|采用).{0,48}"
+                + chinese_local
+                + r".{0,48}"
+                + chinese_subject,
+                normalized,
+            )
+            or re.search(
+                chinese_creation_action
+                + r".{0,48}"
+                + chinese_subject
+                + r".{0,48}(?:带|包含|使用|采用).{0,48}"
+                + chinese_local,
+                normalized,
+            )
+            or re.search(
+                chinese_creation_action
+                + r".{0,48}"
+                + chinese_subject
+                + r".{0,24}(?:并|同时|然后|再)?(?:添加|加上|加入|叠加).{0,24}(?:logo|标志)",
+                normalized,
+            )
+        )
+        if (
+            re.search(chinese_local, normalized)
+            and not re.search(chinese_full, normalized)
+            and not creates_whole_with_local
+        ):
+            continue
+        return True
+
+    english_action = (
+        r"\b(?:create|make|design|generate|build|redo|re-do|remake|redesign|"
+        r"optimize|optimise|improve|enhance|revamp|rework)\b"
+    )
+    english_creation_action = (
+        r"\b(?:create|make|design|generate|build|redo|re-do|remake|redesign)\b"
+    )
+    english_subject = (
+        r"\b(?:(?:e-?commerce|commerce|product|listing)\s+)?(?:main|hero)\s+image\b"
+    )
+    english_local = (
+        r"\b(?:text|copy|background|logo|corner|small area|local detail|color|colour|"
+        r"resolution|clarity|sharpness|shadow|reflection|highlight|icon|qr code|border|"
+        r"typography|font|type|spacing|position|crop|size|dimensions?|format|compression)\b"
+    )
+    english_full = r"\b(?:whole|entire|overall|complete)\b"
+    english_negative = r"\b(?:do\s+not|don't|dont|not|never|without)\b"
+    english_advice = r"\b(?:how\s+to|ways?\s+to|tips?\s+(?:for|to)|review\s+how|check\s+how|analy[sz]e\s+how)\b"
+    english_review_verb = r"\b(?:review|assess|check|analy[sz]e|audit|evaluate)\b"
+    english_advice_noun = r"\b(?:options?|plans?|recommendations?|proposals?|feasibility)\b"
+    english_translation = r"\b(?:translate|locali[sz]e|translation)\b"
+    for clause in re.split(r"[.!?;\r\n]+", normalized):
+        if not clause.strip():
+            continue
+        if re.search(english_translation, normalized):
+            continue
+        forward = re.search(english_action + r".{0,96}" + english_subject, clause)
+        reverse = re.search(english_subject + r".{0,96}" + english_action, clause)
+        if forward is None and reverse is None:
+            continue
+        if (
+            re.search(english_negative, clause)
+            or re.search(english_advice, clause)
+            or (
+                re.search(english_review_verb, clause)
+                and re.search(english_advice_noun, clause)
+            )
+        ):
+            continue
+        creates_whole_with_local = bool(
+            re.search(
+                english_creation_action
+                + r".{0,96}"
+                + english_subject
+                + r".{0,48}\b(?:with|including|featuring|using)\b.{0,48}"
+                + english_local,
+                normalized,
+            )
+            or re.search(
+                english_creation_action
+                + r".{0,48}\b(?:with|including|featuring|using)\b.{0,48}"
+                + english_local
+                + r".{0,96}"
+                + english_subject,
+                normalized,
+            )
+            or re.search(
+                english_creation_action
+                + r".{0,96}"
+                + english_subject
+                + r".{0,32}\b(?:(?:and|then)\s+)?(?:add|apply|overlay)\b.{0,24}\blogo\b",
+                normalized,
+            )
+        )
+        if (
+            re.search(english_local, normalized)
+            and not re.search(english_full, normalized)
+            and not creates_whole_with_local
+        ):
+            continue
+        return True
+    return False
+
+
 FORMAT_BY_SUFFIX = {
     ".png": "PNG",
     ".jpg": "JPEG",
@@ -236,6 +537,8 @@ def upgrade_manifest(data: dict[str, Any]) -> dict[str, Any]:
     data["schema_version"] = SCHEMA_VERSION
     data.setdefault("manifest_id", None)
     data.setdefault("revision", 0)
+    data.setdefault("workflow", None)
+    data.setdefault("main_image_policy", None)
     data.setdefault("unsupported_inputs", [])
     data.setdefault("excluded_inputs", [])
     data.setdefault("input_roles", [])
@@ -283,6 +586,9 @@ def upgrade_manifest(data: dict[str, Any]) -> dict[str, Any]:
         item.setdefault("localization_plan_registration", None)
         item.setdefault("localization_execution_stage", None)
         item.setdefault("localization_composition", None)
+        item.setdefault("main_image_plan", None)
+        item.setdefault("main_image_plan_registration", None)
+        item.setdefault("main_image_quality_review", None)
         item.setdefault("updated_at", None)
         item.setdefault("output_validation", None)
         item.setdefault("base_output", None)
@@ -1424,6 +1730,1129 @@ def validate_localization_plan_contract(
     return errors
 
 
+def validate_commerce_main_image_policy(manifest: dict[str, Any]) -> list[str]:
+    """Validate the preflight-frozen commerce intent independently of item state."""
+    policy = manifest.get("main_image_policy")
+    if not isinstance(policy, dict):
+        return ["commerce_main_image requires a frozen main_image_policy"]
+    errors: list[str] = []
+    expected_fields = {
+        "platform_profile",
+        "visual_direction",
+        "output_ratio",
+        "text_policy",
+        "exact_text",
+    }
+    missing = sorted(expected_fields - set(policy))
+    if missing:
+        errors.append("main_image_policy is missing fields: " + ", ".join(missing))
+        return errors
+    for field in ("platform_profile", "visual_direction", "output_ratio"):
+        if not isinstance(policy.get(field), str) or not str(policy[field]).strip():
+            errors.append(f"main_image_policy {field} must be a non-empty string")
+    if policy.get("output_ratio") != manifest.get("ratio"):
+        errors.append("main_image_policy output_ratio must exactly match the manifest ratio")
+    text_policy = policy.get("text_policy")
+    if text_policy not in {"no_text", "preserve_existing_exact", "user_exact"}:
+        errors.append("main_image_policy text_policy is invalid")
+    exact_text = policy.get("exact_text")
+    if not isinstance(exact_text, str):
+        errors.append("main_image_policy exact_text must be a string")
+    elif text_policy == "user_exact" and not exact_text.strip():
+        errors.append("main_image_policy user_exact requires non-empty exact_text")
+    elif text_policy != "user_exact" and exact_text:
+        errors.append("main_image_policy exact_text is only valid with user_exact")
+    if text_policy == "preserve_existing_exact" and manifest.get("mode") != "edit":
+        errors.append("preserve_existing_exact is only valid for commerce_main_image edit tasks")
+    return errors
+
+
+def _main_image_plan_value_is_nonempty(value: Any) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, dict)):
+        return bool(value)
+    return value is not None
+
+
+def validate_main_image_plan_contract(
+    item: dict[str, Any],
+    manifest: dict[str, Any],
+    plan: dict[str, Any],
+) -> list[str]:
+    """Validate one complete, task-bound commerce art-direction plan."""
+    errors: list[str] = []
+    missing = sorted(COMMERCE_MAIN_IMAGE_PLAN_FIELDS - set(plan))
+    if missing:
+        errors.append("main_image_plan is missing fields: " + ", ".join(missing))
+        return errors
+    if plan.get("schema_version") != 1:
+        errors.append("main_image_plan schema_version must be 1")
+    if plan.get("contract") != "commerce-main-image-plan-v1":
+        errors.append("main_image_plan contract must be commerce-main-image-plan-v1")
+    policy = manifest.get("main_image_policy")
+    if not isinstance(policy, dict):
+        return ["main_image_plan requires the manifest main_image_policy"]
+    if plan.get("task_id") != item.get("task_id"):
+        errors.append("main_image_plan task_id does not match the manifest item")
+    if plan.get("creative_route") != COMMERCE_MAIN_IMAGE_WORKFLOW:
+        errors.append("main_image_plan creative_route must be commerce_main_image")
+    for field in ("platform_profile", "visual_direction", "output_ratio", "text_policy", "exact_text"):
+        if plan.get(field) != policy.get(field):
+            errors.append(f"main_image_plan {field} does not match the frozen main_image_policy")
+    if plan.get("operation") != manifest.get("operation"):
+        errors.append("main_image_plan operation does not exactly match the manifest operation")
+    if plan.get("source") != item.get("source"):
+        errors.append("main_image_plan source does not exactly match the manifest item")
+    if plan.get("source_sha256") != item.get("source_sha256"):
+        errors.append("main_image_plan source_sha256 does not match preflight")
+    output_value = str(plan.get("output") or "")
+    if not output_value or canonical_path_key(Path(output_value)) != canonical_path_key(
+        Path(str(item.get("output") or ""))
+    ):
+        errors.append("main_image_plan output does not match the preallocated task output")
+    if plan.get("thumbnail_requirements") != [160, 256]:
+        errors.append("main_image_plan thumbnail_requirements must be exactly [160, 256]")
+
+    for field in (
+        "product_content_lock",
+        "single_focus",
+        "composition",
+        "camera_and_scale",
+        "lighting_and_shadow",
+        "material_response",
+        "background_and_color",
+    ):
+        if not _main_image_plan_value_is_nonempty(plan.get(field)):
+            errors.append(f"main_image_plan {field} must be non-empty")
+
+    occupancy = plan.get("hero_occupancy")
+    if not isinstance(occupancy, dict) or set(occupancy) != {
+        "min_fraction",
+        "max_fraction",
+        "override_reason",
+    }:
+        errors.append(
+            "main_image_plan hero_occupancy must define min_fraction, max_fraction, and override_reason"
+        )
+    else:
+        minimum = occupancy.get("min_fraction")
+        maximum = occupancy.get("max_fraction")
+        reason = occupancy.get("override_reason")
+        valid_numbers = (
+            not isinstance(minimum, bool)
+            and isinstance(minimum, (int, float))
+            and math.isfinite(minimum)
+            and not isinstance(maximum, bool)
+            and isinstance(maximum, (int, float))
+            and math.isfinite(maximum)
+            and 0 < minimum <= maximum <= 1
+        )
+        if not valid_numbers:
+            errors.append("main_image_plan hero_occupancy fractions must satisfy 0 < min <= max <= 1")
+        if not isinstance(reason, str):
+            errors.append("main_image_plan hero_occupancy override_reason must be a string")
+        elif valid_numbers and (minimum < 0.65 or maximum > 0.85) and not reason.strip():
+            errors.append("hero_occupancy outside the general-commerce 0.65-0.85 range requires override_reason")
+
+    safe_margin = plan.get("safe_margin")
+    if not isinstance(safe_margin, dict) or set(safe_margin) != {
+        "min_short_edge_fraction",
+        "override_reason",
+    }:
+        errors.append(
+            "main_image_plan safe_margin must define min_short_edge_fraction and override_reason"
+        )
+    else:
+        margin = safe_margin.get("min_short_edge_fraction")
+        reason = safe_margin.get("override_reason")
+        margin_valid = (
+            not isinstance(margin, bool)
+            and isinstance(margin, (int, float))
+            and math.isfinite(margin)
+            and 0 < margin < 0.5
+        )
+        if not margin_valid:
+            errors.append("main_image_plan safe_margin fraction must satisfy 0 < value < 0.5")
+        if not isinstance(reason, str):
+            errors.append("main_image_plan safe_margin override_reason must be a string")
+        elif margin_valid and margin < 0.05 and not reason.strip():
+            errors.append("safe_margin below the general-commerce 0.05 minimum requires override_reason")
+
+    hierarchy = plan.get("information_hierarchy")
+    if (
+        not isinstance(hierarchy, list)
+        or not 1 <= len(hierarchy) <= 3
+        or any(not isinstance(value, str) or not value.strip() for value in hierarchy)
+        or len(hierarchy) != len(set(hierarchy))
+        or hierarchy[0] != "product"
+    ):
+        errors.append(
+            "main_image_plan information_hierarchy must contain 1-3 unique layers with product first"
+        )
+    forbidden = plan.get("forbidden_patterns")
+    if (
+        not isinstance(forbidden, list)
+        or not forbidden
+        or any(not isinstance(value, str) or not value.strip() for value in forbidden)
+        or len(forbidden) != len(set(forbidden))
+    ):
+        errors.append("main_image_plan forbidden_patterns must be a non-empty unique string list")
+    elif not COMMERCE_MAIN_IMAGE_HARD_REJECTS.issubset(set(forbidden)):
+        missing_forbidden = sorted(COMMERCE_MAIN_IMAGE_HARD_REJECTS - set(forbidden))
+        errors.append(
+            "main_image_plan forbidden_patterns is missing hard bans: "
+            + ", ".join(missing_forbidden)
+        )
+
+    text_policy = plan.get("text_policy")
+    exact_text = plan.get("exact_text")
+    inventory = plan.get("existing_text_inventory")
+    if not isinstance(exact_text, str):
+        errors.append("main_image_plan exact_text must be a string")
+    if not isinstance(inventory, list) or any(
+        not isinstance(value, str) or not value.strip() for value in inventory
+    ):
+        errors.append("main_image_plan existing_text_inventory must be a string list")
+    elif text_policy == "preserve_existing_exact" and not inventory:
+        errors.append("preserve_existing_exact requires a non-empty existing_text_inventory")
+    elif text_policy != "preserve_existing_exact" and inventory:
+        errors.append("existing_text_inventory is only valid with preserve_existing_exact")
+    if text_policy == "user_exact" and (not isinstance(exact_text, str) or not exact_text.strip()):
+        errors.append("user_exact main_image_plan requires non-empty exact_text")
+    if text_policy == "no_text" and exact_text != "":
+        errors.append("no_text main_image_plan requires empty exact_text")
+    return errors
+
+
+def validate_main_image_plan_registration(
+    item: dict[str, Any],
+    manifest: dict[str, Any],
+) -> list[str]:
+    """Re-read and hash the frozen pre-attempt commerce plan."""
+    plan = item.get("main_image_plan")
+    registration = item.get("main_image_plan_registration")
+    try:
+        attempts = int(item.get("attempts", 0) or 0)
+    except (TypeError, ValueError):
+        attempts = 0
+    history = item.get("attempt_history")
+    has_history = isinstance(history, list) and bool(history)
+    if plan is None and registration is None:
+        if attempts > 0 or has_history or item.get("status") == "success":
+            return ["commerce main-image attempts require a frozen plan registered before the first attempt"]
+        return []
+    if not isinstance(plan, dict):
+        return ["main_image_plan must be a registered object"]
+    if not isinstance(registration, dict):
+        return ["main_image_plan requires a frozen artifact registration"]
+
+    errors = validate_main_image_plan_contract(item, manifest, plan)
+    expected_fields = {
+        "schema_version": 1,
+        "producer": "xobi-img.update_manifest",
+        "contract": "frozen-commerce-main-image-plan-v1",
+        "manifest_id": manifest.get("manifest_id"),
+        "task_id": item.get("task_id"),
+        "source_sha256": item.get("source_sha256"),
+        "attempts_at_registration": 0,
+        "attempt_history_count_at_registration": 0,
+    }
+    for field, expected in expected_fields.items():
+        if registration.get(field) != expected:
+            errors.append(f"main-image plan registration {field} does not match its frozen contract")
+    try:
+        registered_time = datetime.fromisoformat(str(registration.get("registered_at") or ""))
+        if registered_time.tzinfo is None:
+            raise ValueError("timestamp lacks timezone")
+    except ValueError:
+        errors.append("main-image plan registration timestamp is invalid")
+        registered_time = None
+
+    path_value = str(registration.get("path") or "")
+    digest = str(registration.get("sha256") or "")
+    if not path_value or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        errors.append("main-image plan registration path or sha256 is invalid")
+        return errors
+    raw_path = Path(path_value).expanduser().absolute()
+    for candidate in (raw_path, *raw_path.parents):
+        if candidate.exists() and is_link_or_junction(candidate):
+            errors.append(f"frozen main-image plan must not traverse a symlink or junction: {candidate}")
+            return errors
+    plan_path = raw_path.resolve()
+    work_root = (Path(str(manifest.get("task_dir") or "")) / ".xobi" / "work").resolve()
+    try:
+        plan_path.relative_to(work_root)
+    except ValueError:
+        errors.append("frozen main-image plan artifact must remain inside .xobi/work")
+    if not plan_path.is_file():
+        errors.append("frozen main-image plan artifact is missing")
+        return errors
+    if sha256_file(plan_path) != digest:
+        errors.append("frozen main-image plan artifact hash changed after registration")
+        return errors
+    try:
+        artifact_plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        errors.append(f"frozen main-image plan artifact is unreadable: {exc}")
+    else:
+        if artifact_plan != plan:
+            errors.append("manifest main_image_plan differs from its frozen artifact")
+
+    for other in manifest.get("items", []):
+        if other is item or other.get("task_id") == item.get("task_id"):
+            continue
+        other_registration = other.get("main_image_plan_registration")
+        if isinstance(other_registration, dict) and str(other_registration.get("path") or ""):
+            if canonical_path_key(Path(str(other_registration["path"]))) == canonical_path_key(plan_path):
+                errors.append("each commerce main-image task requires its own frozen plan artifact")
+                break
+    if registered_time is not None and isinstance(history, list):
+        for record in history:
+            if not isinstance(record, dict):
+                continue
+            try:
+                attempt_time = datetime.fromisoformat(str(record.get("recorded_at") or ""))
+                if attempt_time.tzinfo is None:
+                    raise ValueError("timestamp lacks timezone")
+            except ValueError:
+                continue
+            if registered_time >= attempt_time:
+                errors.append("main-image plan must be registered before every image attempt")
+                break
+    return errors
+
+
+def validate_main_image_attempt_contract(
+    item: dict[str, Any],
+    manifest: dict[str, Any],
+) -> list[str]:
+    """Require one auditable record for each commerce candidate, without consuming Logo stages."""
+    errors: list[str] = []
+    try:
+        attempts = int(item.get("attempts", 0) or 0)
+    except (TypeError, ValueError):
+        return ["commerce main-image attempts must be an integer"]
+    if attempts < 0:
+        return ["commerce main-image attempts must be non-negative"]
+    history = item.get("attempt_history")
+    if not isinstance(history, list):
+        return errors + ["commerce main-image attempt_history must be a list"]
+
+    registration = item.get("main_image_plan_registration")
+    plan_digest = registration.get("sha256") if isinstance(registration, dict) else None
+    seen_ids: set[str] = set()
+    seen_attempts: set[int] = set()
+    main_candidate_attempts: set[int] = set()
+    main_infrastructure_attempts: set[int] = set()
+    accepted_main_attempts: set[int] = set()
+    seen_candidate_hashes: set[str] = set()
+    parsed_times: list[tuple[int, datetime]] = []
+    for index, record in enumerate(history, start=1):
+        if not isinstance(record, dict):
+            errors.append(f"commerce main-image attempt record {index} must be an object")
+            continue
+        record_id = str(record.get("record_id") or "")
+        if not record_id or record_id in seen_ids:
+            errors.append("commerce main-image attempt record_id is missing or duplicated")
+        seen_ids.add(record_id)
+        stage = record.get("attempt_stage")
+        if stage not in {COMMERCE_MAIN_IMAGE_ATTEMPT_STAGE, "logo_conflict"}:
+            errors.append("commerce main-image attempt history requires a valid explicit stage")
+        try:
+            attempt = int(record.get("attempt", 0) or 0)
+        except (TypeError, ValueError):
+            attempt = 0
+        if attempt < 1 or attempt > attempts or attempt in seen_attempts:
+            errors.append(
+                "commerce main-image history must use unique positive attempts within the task total"
+            )
+        seen_attempts.add(attempt)
+        try:
+            recorded_time = datetime.fromisoformat(str(record.get("recorded_at") or ""))
+            if recorded_time.tzinfo is None or recorded_time > datetime.now().astimezone() + timedelta(seconds=5):
+                raise ValueError("invalid timestamp")
+        except ValueError:
+            errors.append("commerce main-image attempt timestamp is invalid")
+        else:
+            parsed_times.append((attempt, recorded_time))
+
+        if stage != COMMERCE_MAIN_IMAGE_ATTEMPT_STAGE:
+            continue
+        failure_type = record.get("failure_type")
+        if record.get("main_image_plan_sha256") != plan_digest:
+            errors.append("commerce main-image attempt is not bound to the frozen plan hash")
+        error_value = str(record.get("error") or "").strip()
+        if failure_type == "infrastructure":
+            main_infrastructure_attempts.add(attempt)
+            if record.get("status") == "success" or not error_value:
+                errors.append(
+                    "commerce main-image infrastructure failures require a non-success status and error"
+                )
+            if any(
+                key in record
+                for key in (
+                    "candidate_path",
+                    "candidate_sha256",
+                    "candidate_width",
+                    "candidate_height",
+                )
+            ):
+                errors.append("commerce main-image infrastructure failures must not claim a candidate")
+            if record.get("quality_review") is not None:
+                errors.append("commerce main-image infrastructure failures must not claim a quality review")
+            continue
+
+        main_candidate_attempts.add(attempt)
+        if failure_type not in {None, "quality"}:
+            errors.append("commerce main-image candidates may only record quality failures")
+        if failure_type == "quality" and not error_value:
+            errors.append("failed commerce main-image candidates require an error")
+        if failure_type == "quality" and record.get("status") == "success":
+            errors.append("failed commerce main-image candidates cannot have success status")
+        if failure_type is None and error_value:
+            errors.append("accepted commerce main-image candidates must not contain an error")
+        if failure_type is None and record.get("status") not in {"pending", "success"}:
+            errors.append("accepted commerce main-image candidates require pending or success status")
+        if failure_type is None:
+            accepted_main_attempts.add(attempt)
+        candidate_path = str(record.get("candidate_path") or "")
+        candidate_digest = str(record.get("candidate_sha256") or "")
+        if not candidate_path or canonical_path_key(Path(candidate_path)) != canonical_path_key(
+            Path(str(item.get("output") or ""))
+        ):
+            errors.append("commerce main-image attempt candidate_path must match the preallocated output")
+        if not re.fullmatch(r"[0-9a-f]{64}", candidate_digest):
+            errors.append("commerce main-image attempt candidate_sha256 is invalid")
+        elif candidate_digest in seen_candidate_hashes:
+            errors.append("commerce main-image attempts must not reuse the same candidate hash")
+        else:
+            seen_candidate_hashes.add(candidate_digest)
+        for dimension in ("candidate_width", "candidate_height"):
+            value = record.get(dimension)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                errors.append(f"commerce main-image attempt {dimension} must be a positive integer")
+        review_errors = _validate_main_image_review_registration(
+            record.get("quality_review"),
+            item,
+            manifest,
+            record,
+            expected_attempt=attempt,
+            expected_passed=failure_type is None,
+        )
+        errors.extend(
+            f"commerce main-image attempt {attempt} review: {message}"
+            for message in review_errors
+        )
+    if seen_attempts != set(range(1, attempts + 1)):
+        errors.append("commerce main-image attempt history must record every image call exactly once")
+    if len(main_candidate_attempts) > 3:
+        errors.append("commerce main-image quality attempt budget exceeds 3")
+    if len(main_infrastructure_attempts) > 4:
+        errors.append("commerce main-image infrastructure attempt budget exceeds 4")
+    if accepted_main_attempts:
+        first_accepted_attempt = min(accepted_main_attempts)
+        later_main_attempts = (
+            main_candidate_attempts | main_infrastructure_attempts
+        ) - {first_accepted_attempt}
+        if any(attempt > first_accepted_attempt for attempt in later_main_attempts):
+            errors.append(
+                "commerce main-image stage is closed after its accepted reviewed candidate"
+            )
+    accepted_candidate_records = [
+        record
+        for record in history
+        if isinstance(record, dict)
+        and record.get("attempt_stage") == COMMERCE_MAIN_IMAGE_ATTEMPT_STAGE
+        and record.get("failure_type") is None
+    ]
+    accepted_review_registrations = [
+        record.get("quality_review") for record in accepted_candidate_records
+    ]
+    accepted_alias = item.get("main_image_quality_review")
+    if accepted_review_registrations:
+        if len(accepted_review_registrations) != 1:
+            errors.append("commerce main-image tasks may preserve only one accepted candidate review")
+        if accepted_alias != accepted_review_registrations[-1]:
+            errors.append("main_image_quality_review must alias the accepted attempt review exactly")
+    elif accepted_alias is not None:
+        errors.append("main_image_quality_review requires an accepted candidate attempt")
+    if len(accepted_candidate_records) == 1:
+        accepted_record = accepted_candidate_records[0]
+        if manifest.get("logo"):
+            if accepted_record.get("status") != "pending":
+                errors.append("Logo-combined accepted main-image attempt must remain pending")
+            accepted_base = accepted_record.get("accepted_base")
+            if not isinstance(accepted_base, dict):
+                errors.append(
+                    "Logo-combined accepted main-image attempt requires frozen base_output evidence"
+                )
+            else:
+                base_value = str(item.get("base_output") or "")
+                registered_path_value = str(accepted_base.get("path") or "")
+                base_path = Path(base_value).resolve() if base_value else None
+                registered_path = (
+                    Path(registered_path_value).resolve() if registered_path_value else None
+                )
+                work_root = (
+                    Path(str(manifest.get("task_dir") or "")) / ".xobi" / "work"
+                ).resolve()
+                if (
+                    accepted_base.get("kind") != "base_output"
+                    or accepted_base.get("policy") != "no_reference_pure_generation"
+                    or base_path is None
+                    or registered_path is None
+                    or canonical_path_key(base_path) != canonical_path_key(registered_path)
+                ):
+                    errors.append(
+                        "Logo-combined accepted main-image base_output registration is invalid"
+                    )
+                else:
+                    try:
+                        base_path.relative_to(work_root)
+                    except ValueError:
+                        errors.append(
+                            "Logo-combined accepted main-image base_output must remain inside .xobi/work"
+                        )
+                    if not base_path.is_file():
+                        errors.append("Logo-combined accepted main-image base_output is missing")
+                    else:
+                        base_digest = sha256_file(base_path)
+                        if (
+                            base_digest != accepted_base.get("sha256")
+                            or base_digest != accepted_record.get("candidate_sha256")
+                        ):
+                            errors.append(
+                                "Logo-combined accepted main-image base_output hash differs from its candidate"
+                            )
+        elif accepted_record.get("status") != "success":
+            errors.append(
+                "accepted main-image attempt without Logo must complete as success"
+            )
+    quality_failures = [
+        record
+        for record in history
+        if isinstance(record, dict)
+        and record.get("attempt_stage") == COMMERCE_MAIN_IMAGE_ATTEMPT_STAGE
+        and record.get("failure_type") == "quality"
+    ]
+    for failure_index, record in enumerate(quality_failures, start=1):
+        required_status = "failed" if failure_index == 3 else "pending"
+        if record.get("status") != required_status:
+            errors.append(
+                f"commerce main-image quality failure {failure_index} requires {required_status} status"
+            )
+    if len(quality_failures) == 3 and item.get("status") != "failed":
+        errors.append("three commerce main-image quality failures require final failed task status")
+    if len(quality_failures) == 3:
+        try:
+            terminal_attempt = max(int(record.get("attempt", 0) or 0) for record in quality_failures)
+        except (TypeError, ValueError):
+            terminal_attempt = 0
+        later_records: list[dict[str, Any]] = []
+        if terminal_attempt > 0:
+            for record in history:
+                if not isinstance(record, dict):
+                    continue
+                try:
+                    record_attempt = int(record.get("attempt", 0) or 0)
+                except (TypeError, ValueError):
+                    continue
+                if record_attempt > terminal_attempt:
+                    later_records.append(record)
+        if terminal_attempt < 1 or attempts != terminal_attempt or later_records:
+            errors.append(
+                "the third commerce main-image quality failure is terminal and must be the final task attempt"
+            )
+        terminal_records: list[dict[str, Any]] = []
+        if terminal_attempt > 0:
+            for record in quality_failures:
+                try:
+                    record_attempt = int(record.get("attempt", 0) or 0)
+                except (TypeError, ValueError):
+                    continue
+                if record_attempt == terminal_attempt:
+                    terminal_records.append(record)
+        terminal_record = terminal_records[0] if len(terminal_records) == 1 else None
+        archive_value = str(
+            terminal_record.get("candidate_archive_path") if terminal_record else ""
+        )
+        if not archive_value:
+            errors.append("terminal commerce main-image failure requires an archived rejected candidate")
+        else:
+            archive_path = Path(archive_value).expanduser().absolute()
+            work_root = (
+                Path(str(manifest.get("task_dir") or "")) / ".xobi" / "work" / "rejected"
+            ).resolve()
+            try:
+                resolved_archive = archive_path.resolve()
+                resolved_archive.relative_to(work_root)
+            except (OSError, ValueError):
+                errors.append("terminal rejected candidate archive must remain inside .xobi/work/rejected")
+            else:
+                if not resolved_archive.is_file():
+                    errors.append("terminal rejected candidate archive is missing")
+                elif sha256_file(resolved_archive) != terminal_record.get("candidate_sha256"):
+                    errors.append("terminal rejected candidate archive hash changed")
+    ordered_times = [value for _, value in sorted(parsed_times)]
+    if any(later < earlier for earlier, later in zip(ordered_times, ordered_times[1:])):
+        errors.append("commerce main-image attempt timestamps must be monotonic")
+
+    if item.get("status") == "success":
+        accepted_candidates = [
+            record
+            for record in history
+            if isinstance(record, dict)
+            and record.get("attempt_stage") == COMMERCE_MAIN_IMAGE_ATTEMPT_STAGE
+            and record.get("failure_type") is None
+            and record.get("status") in {"pending", "success"}
+        ]
+        if not accepted_candidates:
+            errors.append("commerce main-image success requires a previously accepted quality candidate")
+        review_registration = item.get("main_image_quality_review")
+        review = review_registration.get("record") if isinstance(review_registration, dict) else None
+        review_output = review.get("output") if isinstance(review, dict) else None
+        review_digest = review_output.get("sha256") if isinstance(review_output, dict) else None
+        accepted_hashes = {
+            str(record.get("candidate_sha256") or "") for record in accepted_candidates
+        }
+        approved_candidate_digest = review_digest
+        if manifest.get("logo"):
+            decision = item.get("logo_decision")
+            if decision == "direct_overlay":
+                approved_base_value = str(item.get("prepared_base") or "")
+            elif decision == "regenerate_for_conflict":
+                approved_base_value = str(item.get("conflict_reference_base") or "")
+            else:
+                approved_base_value = ""
+            approved_base = Path(approved_base_value).resolve() if approved_base_value else None
+            if approved_base is None or not approved_base.is_file():
+                errors.append("commerce main-image Logo success requires its preserved accepted base")
+                approved_candidate_digest = None
+            else:
+                approved_candidate_digest = sha256_file(approved_base)
+        if accepted_candidates and approved_candidate_digest not in accepted_hashes:
+            errors.append("commerce main-image review does not derive from an accepted candidate hash")
+        failed_hashes = {
+            record.get("candidate_sha256")
+            for record in history
+            if isinstance(record, dict)
+            and record.get("attempt_stage") == COMMERCE_MAIN_IMAGE_ATTEMPT_STAGE
+            and record.get("failure_type") == "quality"
+        }
+        if approved_candidate_digest and approved_candidate_digest in failed_hashes:
+            errors.append("commerce main-image review cannot approve a previously quality-failed candidate hash")
+    return errors
+
+
+def _registered_review_json(
+    value: Any,
+    work_root: Path,
+    label: str,
+) -> tuple[Path | None, dict[str, Any] | None, list[str]]:
+    errors: list[str] = []
+    if not isinstance(value, dict) or set(value) != {"path", "sha256"}:
+        return None, None, [f"{label} registration must contain only path and sha256"]
+    path_value = str(value.get("path") or "")
+    digest = str(value.get("sha256") or "")
+    if not path_value or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        return None, None, [f"{label} path or sha256 is invalid"]
+    raw_path = Path(path_value).expanduser().absolute()
+    for candidate in (raw_path, *raw_path.parents):
+        if candidate.exists() and is_link_or_junction(candidate):
+            return None, None, [f"{label} must not traverse a symlink or junction: {candidate}"]
+    path = raw_path.resolve()
+    try:
+        path.relative_to(work_root)
+    except ValueError:
+        errors.append(f"{label} must remain inside .xobi/work")
+    if path.suffix.casefold() != ".json" or not path.is_file():
+        errors.append(f"{label} must name an existing JSON artifact")
+        return path, None, errors
+    if sha256_file(path) != digest:
+        errors.append(f"{label} hash changed after review finalization")
+        return path, None, errors
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        errors.append(f"{label} is unreadable: {exc}")
+        return path, None, errors
+    if not isinstance(payload, dict):
+        errors.append(f"{label} must contain a JSON object")
+        return path, None, errors
+    return path, payload, errors
+
+
+def _expected_main_image_review(
+    evidence: dict[str, Any],
+    assessment: dict[str, Any],
+    assessment_path: Path,
+    assessment_digest: str,
+    evidence_path: Path,
+    evidence_digest: str,
+) -> tuple[dict[str, Any] | None, list[str]]:
+    errors: list[str] = []
+    if set(assessment) != COMMERCE_MAIN_IMAGE_ASSESSMENT_KEYS:
+        return None, ["main-image assessment top-level keys do not match the v1 contract"]
+    expected_bindings = {
+        "schema_version": 1,
+        "producer": "xobi-img.create_main_image_review",
+        "contract": "commerce-main-image-assessment-v1",
+        "manifest_id": evidence.get("manifest_id"),
+        "task_id": evidence.get("task_id"),
+        "operation": evidence.get("operation"),
+        "candidate": evidence.get("candidate"),
+        "plan": evidence.get("plan"),
+    }
+    for field, expected in expected_bindings.items():
+        if assessment.get(field) != expected:
+            errors.append(f"main-image assessment {field} does not match prepared evidence")
+
+    scores = assessment.get("scores")
+    checks = assessment.get("required_checks")
+    rejects = assessment.get("hard_rejects")
+    if not isinstance(scores, dict) or set(scores) != COMMERCE_MAIN_IMAGE_REVIEW_SCORES:
+        errors.append("main-image assessment score keys do not match the v1 contract")
+        scores = {}
+    elif any(
+        isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 5
+        for value in scores.values()
+    ):
+        errors.append("main-image assessment scores must be integers from 1 to 5")
+    if not isinstance(checks, dict) or set(checks) != COMMERCE_MAIN_IMAGE_ASSESSMENT_CHECKS:
+        errors.append("main-image assessment required_checks keys do not match the v1 contract")
+        checks = {}
+    elif any(not isinstance(value, bool) for value in checks.values()):
+        errors.append("main-image assessment required_checks must be boolean")
+    if not isinstance(rejects, dict) or set(rejects) != COMMERCE_MAIN_IMAGE_HARD_REJECTS:
+        errors.append("main-image assessment hard_rejects keys do not match the v1 contract")
+        rejects = {}
+    elif any(not isinstance(value, bool) for value in rejects.values()):
+        errors.append("main-image assessment hard_rejects must be boolean")
+
+    raw_views = assessment.get("views")
+    evidence_views = evidence.get("views")
+    view_requests: dict[str, bool] = {}
+    if not isinstance(raw_views, dict) or set(raw_views) != {"full", "256", "160"}:
+        errors.append("main-image assessment views must be exactly full, 256, and 160")
+    elif not isinstance(evidence_views, dict):
+        errors.append("main-image evidence views must be an object")
+    else:
+        for name in ("full", "256", "160"):
+            raw_view = raw_views.get(name)
+            evidence_view = evidence_views.get(name)
+            if not isinstance(raw_view, dict) or set(raw_view) != {
+                "path", "sha256", "width", "height", "passed", "notes"
+            }:
+                errors.append(f"main-image assessment view {name} keys do not match the v1 contract")
+                continue
+            if not isinstance(evidence_view, dict):
+                errors.append(f"main-image evidence view {name} must be an object")
+                continue
+            for field in ("path", "sha256", "width", "height"):
+                if raw_view.get(field) != evidence_view.get(field):
+                    errors.append(f"main-image assessment view {name} {field} changed")
+            if not isinstance(raw_view.get("passed"), bool):
+                errors.append(f"main-image assessment view {name} passed must be boolean")
+            else:
+                view_requests[name] = raw_view["passed"]
+            if not isinstance(raw_view.get("notes"), str):
+                errors.append(f"main-image assessment view {name} notes must be a string")
+    reviewer = assessment.get("reviewer")
+    notes = assessment.get("notes")
+    if not isinstance(reviewer, str) or not reviewer.strip():
+        errors.append("main-image assessment reviewer must be a non-empty string")
+    if not isinstance(notes, str):
+        errors.append("main-image assessment notes must be a string")
+    if errors:
+        return None, errors
+
+    score_passed = all(scores[name] >= 4 for name in COMMERCE_MAIN_IMAGE_REVIEW_SCORES)
+    checks_passed = all(checks.values())
+    rejects_passed = not any(rejects.values())
+    full_gate = (
+        all(
+            scores[name] >= 4
+            for name in COMMERCE_MAIN_IMAGE_REVIEW_SCORES
+            if name != "thumbnail_readability"
+        )
+        and checks_passed
+        and rejects_passed
+    )
+    thumbnail_gate = (
+        scores["thumbnail_readability"] >= 4
+        and checks["single_focal_point"]
+        and checks["product_priority"]
+        and checks["clear_hierarchy"]
+        and checks["safe_margins"]
+        and rejects_passed
+    )
+    criteria = {
+        "single_focal_point": checks["single_focal_point"],
+        "product_priority": checks["product_priority"],
+        "clear_information_hierarchy": checks["clear_hierarchy"],
+        "safe_margins": checks["safe_margins"],
+        "realistic_material_scale_and_shadow": checks["realistic_scale_and_shadow"],
+        "thumbnail_readability": scores["thumbnail_readability"] >= 4,
+        "typography_quality": scores["typography"] >= 4,
+        "commercial_polish": scores["commercial_polish"] >= 4,
+        "no_cheap_collage_or_decorations": not any(
+            rejects[name]
+            for name in (
+                "cheap_banner",
+                "random_badge",
+                "thick_outline",
+                "oval_sticker_collage",
+                "clutter",
+                "fake_3d",
+                "oversaturation",
+            )
+        ),
+        "no_invented_claims": checks["no_invented_claims"] and not rejects["invented_claim"],
+    }
+    views = {
+        name: {
+            **evidence_views[name],
+            "passed": view_requests[name] and (full_gate if name == "full" else thumbnail_gate),
+        }
+        for name in ("full", "256", "160")
+    }
+    passed = (
+        score_passed
+        and checks_passed
+        and rejects_passed
+        and all(criteria.values())
+        and all(view["passed"] for view in views.values())
+    )
+    return {
+        "schema_version": 1,
+        "producer": "xobi-img.create_main_image_review",
+        "contract": "commerce-main-image-quality-review-v1",
+        "manifest_id": evidence["manifest_id"],
+        "task_id": evidence["task_id"],
+        "source": evidence["source"],
+        "source_sha256": evidence["source_sha256"],
+        "operation": evidence["operation"],
+        "output": evidence["candidate"],
+        "plan": evidence["plan"],
+        "thumbnail_sizes": [160, 256],
+        "views": views,
+        "criteria": criteria,
+        "scores": scores,
+        "hard_rejects": rejects,
+        "passed": passed,
+        "reviewer": reviewer,
+        "notes": notes,
+        "assessment": {"path": str(assessment_path), "sha256": assessment_digest},
+        "evidence": {"path": str(evidence_path), "sha256": evidence_digest},
+    }, []
+
+
+def _validate_main_image_review_registration(
+    registration: Any,
+    item: dict[str, Any],
+    manifest: dict[str, Any],
+    candidate_record: dict[str, Any],
+    *,
+    expected_attempt: int,
+    expected_passed: bool,
+) -> list[str]:
+    errors: list[str] = []
+    expected_registration_keys = {
+        "schema_version",
+        "producer",
+        "contract",
+        "manifest_id",
+        "task_id",
+        "attempt",
+        "attempt_stage",
+        "passed",
+        "candidate_sha256",
+        "path",
+        "sha256",
+        "registered_at",
+        "record",
+    }
+    if not isinstance(registration, dict) or set(registration) != expected_registration_keys:
+        return ["main-image review registration keys do not match the v1 contract"]
+    expected_registration = {
+        "schema_version": 1,
+        "producer": "xobi-img.update_manifest",
+        "contract": "frozen-commerce-main-image-quality-review-v1",
+        "manifest_id": manifest.get("manifest_id"),
+        "task_id": item.get("task_id"),
+        "attempt": expected_attempt,
+        "attempt_stage": COMMERCE_MAIN_IMAGE_ATTEMPT_STAGE,
+        "passed": expected_passed,
+        "candidate_sha256": candidate_record.get("candidate_sha256"),
+    }
+    for field, expected in expected_registration.items():
+        if registration.get(field) != expected:
+            errors.append(f"main-image review registration {field} does not match")
+    try:
+        registered_time = datetime.fromisoformat(str(registration.get("registered_at") or ""))
+        if (
+            registered_time.tzinfo is None
+            or registered_time > datetime.now().astimezone() + timedelta(seconds=5)
+        ):
+            raise ValueError("invalid timestamp")
+    except ValueError:
+        errors.append("main-image review registration timestamp is invalid")
+
+    work_root = (Path(str(manifest.get("task_dir") or "")) / ".xobi" / "work").resolve()
+    path_value = str(registration.get("path") or "")
+    digest = str(registration.get("sha256") or "")
+    if not path_value or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        errors.append("main-image review artifact path or sha256 is invalid")
+        return errors
+    raw_path = Path(path_value).expanduser().absolute()
+    for candidate in (raw_path, *raw_path.parents):
+        if candidate.exists() and is_link_or_junction(candidate):
+            errors.append(f"main-image review must not traverse a symlink or junction: {candidate}")
+            return errors
+    review_path = raw_path.resolve()
+    try:
+        review_path.relative_to(work_root)
+    except ValueError:
+        errors.append("main-image review artifact must remain inside .xobi/work")
+    if review_path.suffix.casefold() != ".json" or not review_path.is_file():
+        errors.append("main-image review artifact is missing")
+        return errors
+    if sha256_file(review_path) != digest:
+        errors.append("main-image review artifact hash changed after registration")
+        return errors
+    try:
+        artifact_review = json.loads(review_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        errors.append(f"main-image review artifact is unreadable: {exc}")
+        return errors
+    review = registration.get("record")
+    if not isinstance(review, dict) or artifact_review != review:
+        errors.append("main-image review registration differs from its frozen artifact")
+        return errors
+    if set(review) != COMMERCE_MAIN_IMAGE_REVIEW_KEYS:
+        errors.append("main-image review top-level keys do not match the v1 contract")
+        return errors
+
+    evidence_path, evidence, evidence_errors = _registered_review_json(
+        review.get("evidence"), work_root, "main-image review evidence"
+    )
+    assessment_path, assessment, assessment_errors = _registered_review_json(
+        review.get("assessment"), work_root, "main-image review assessment"
+    )
+    errors.extend(evidence_errors)
+    errors.extend(assessment_errors)
+    if evidence_path is None or evidence is None or assessment_path is None or assessment is None:
+        return errors
+    if evidence_path.parent != review_path.parent:
+        errors.append("main-image review and evidence must remain in the same dedicated directory")
+    if evidence_path.name.casefold() != "evidence.json":
+        errors.append("main-image review evidence must be named evidence.json")
+    if set(evidence) != COMMERCE_MAIN_IMAGE_EVIDENCE_KEYS:
+        errors.append("main-image evidence top-level keys do not match the v1 contract")
+        return errors
+
+    expected_candidate = {
+        "path": str(candidate_record.get("candidate_path") or ""),
+        "sha256": candidate_record.get("candidate_sha256"),
+        "width": candidate_record.get("candidate_width"),
+        "height": candidate_record.get("candidate_height"),
+    }
+    expected_evidence = {
+        "schema_version": 1,
+        "producer": "xobi-img.create_main_image_review",
+        "contract": "commerce-main-image-review-evidence-v1",
+        "manifest_id": manifest.get("manifest_id"),
+        "task_id": item.get("task_id"),
+        "source": item.get("source") or "",
+        "source_sha256": item.get("source_sha256"),
+        "operation": manifest.get("operation"),
+        "thumbnail_sizes": [160, 256],
+    }
+    for field, expected in expected_evidence.items():
+        if evidence.get(field) != expected:
+            errors.append(f"main-image evidence {field} does not match its task")
+    evidence_candidate = evidence.get("candidate")
+    if not isinstance(evidence_candidate, dict):
+        errors.append("main-image evidence candidate must be an object")
+    else:
+        if canonical_path_key(Path(str(evidence_candidate.get("path") or ""))) != canonical_path_key(
+            Path(expected_candidate["path"])
+        ):
+            errors.append("main-image evidence candidate path does not match the attempt")
+        for field in ("sha256", "width", "height"):
+            if evidence_candidate.get(field) != expected_candidate[field]:
+                errors.append(f"main-image evidence candidate {field} does not match the attempt")
+
+    plan_registration = item.get("main_image_plan_registration")
+    expected_plan = {
+        "path": plan_registration.get("path") if isinstance(plan_registration, dict) else None,
+        "sha256": plan_registration.get("sha256") if isinstance(plan_registration, dict) else None,
+    }
+    if evidence.get("plan") != expected_plan:
+        errors.append("main-image evidence does not bind the frozen plan")
+
+    views = evidence.get("views")
+    if not isinstance(views, dict) or set(views) != {"full", "256", "160"}:
+        errors.append("main-image evidence views must be exactly full, 256, and 160")
+        return errors
+    full = views.get("full")
+    if not isinstance(full, dict) or set(full) != {"path", "sha256", "width", "height"}:
+        errors.append("main-image full evidence keys do not match the v1 contract")
+        return errors
+    raw_full_path = Path(str(full.get("path") or "")).expanduser().absolute()
+    for candidate in (raw_full_path, *raw_full_path.parents):
+        if candidate.exists() and is_link_or_junction(candidate):
+            errors.append("main-image full evidence must not traverse a symlink or junction")
+            return errors
+    full_path = raw_full_path.resolve()
+    if full_path.parent != evidence_path.parent or not full_path.name.casefold().startswith(
+        "full-original."
+    ):
+        errors.append("main-image full evidence must be the dedicated full-original snapshot")
+    if not full_path.is_file():
+        errors.append("main-image full evidence snapshot is missing")
+        return errors
+    full_payload = full_path.read_bytes()
+    if hashlib.sha256(full_payload).hexdigest() != candidate_record.get("candidate_sha256"):
+        errors.append("main-image full evidence does not preserve the exact attempt candidate bytes")
+    if full.get("sha256") != candidate_record.get("candidate_sha256"):
+        errors.append("main-image full evidence sha256 does not match the attempt")
+    try:
+        with Image.open(io.BytesIO(full_payload)) as probe:
+            frame_count = int(getattr(probe, "n_frames", 1) or 1)
+            if frame_count != 1 or bool(getattr(probe, "is_animated", False)):
+                raise ValueError("full evidence must be static")
+            rendered = ImageOps.exif_transpose(probe).convert("RGBA")
+            rendered.load()
+    except (OSError, UnidentifiedImageError, ValueError) as exc:
+        errors.append(f"main-image full evidence is unreadable: {exc}")
+        return errors
+    if [full.get("width"), full.get("height")] != [rendered.width, rendered.height]:
+        errors.append("main-image full evidence dimensions changed")
+    if [rendered.width, rendered.height] != [
+        candidate_record.get("candidate_width"),
+        candidate_record.get("candidate_height"),
+    ]:
+        errors.append("main-image full evidence dimensions do not match the attempt")
+
+    for name in ("256", "160"):
+        view = views.get(name)
+        if not isinstance(view, dict) or set(view) != {"path", "sha256", "width", "height"}:
+            errors.append(f"main-image {name}px evidence keys do not match the v1 contract")
+            continue
+        raw_view_path = Path(str(view.get("path") or "")).expanduser().absolute()
+        for candidate in (raw_view_path, *raw_view_path.parents):
+            if candidate.exists() and is_link_or_junction(candidate):
+                errors.append(f"main-image {name}px evidence must not traverse a symlink or junction")
+                break
+        view_path = raw_view_path.resolve()
+        if (
+            view_path.parent != evidence_path.parent
+            or view_path.name.casefold() != f"thumbnail-{name}.png"
+        ):
+            errors.append(f"main-image {name}px evidence path does not match the prepared contract")
+        if not view_path.is_file():
+            errors.append(f"main-image {name}px evidence is missing")
+            continue
+        thumbnail = rendered.copy()
+        size = int(name)
+        thumbnail.thumbnail((size, size), Image.Resampling.LANCZOS, reducing_gap=3.0)
+        encoded = io.BytesIO()
+        thumbnail.save(encoded, format="PNG", optimize=False, compress_level=9)
+        expected_payload = encoded.getvalue()
+        if view_path.read_bytes() != expected_payload:
+            errors.append(f"main-image {name}px evidence is not derived from the full snapshot")
+        if view.get("sha256") != hashlib.sha256(expected_payload).hexdigest():
+            errors.append(f"main-image {name}px evidence sha256 changed")
+        if [view.get("width"), view.get("height")] != [thumbnail.width, thumbnail.height]:
+            errors.append(f"main-image {name}px evidence dimensions changed")
+
+    expected_review, rebuild_errors = _expected_main_image_review(
+        evidence,
+        assessment,
+        assessment_path,
+        str(review.get("assessment", {}).get("sha256") or ""),
+        evidence_path,
+        str(review.get("evidence", {}).get("sha256") or ""),
+    )
+    errors.extend(rebuild_errors)
+    if expected_review is not None and review != expected_review:
+        errors.append("main-image review is not the exact result of its frozen evidence and assessment")
+    if review.get("passed") is not expected_passed:
+        errors.append("main-image review pass result does not match the attempt outcome")
+    return errors
+
+
+def validate_main_image_quality_review(
+    item: dict[str, Any],
+    manifest: dict[str, Any],
+    output_record: dict[str, Any] | None,
+) -> list[str]:
+    """Validate the accepted main-image review alias; history remains authoritative."""
+    registration = item.get("main_image_quality_review")
+    if registration is None:
+        return ["commerce main-image success requires a passing quality review"] if item.get("status") == "success" else []
+    if not isinstance(registration, dict):
+        return ["main_image_quality_review must be a frozen artifact registration"]
+    review = registration.get("record")
+    review_output = review.get("output") if isinstance(review, dict) else None
+    review_digest = review_output.get("sha256") if isinstance(review_output, dict) else None
+    accepted = [
+        record
+        for record in item.get("attempt_history", [])
+        if isinstance(record, dict)
+        and record.get("attempt_stage") == COMMERCE_MAIN_IMAGE_ATTEMPT_STAGE
+        and record.get("failure_type") is None
+        and record.get("candidate_sha256") == review_digest
+    ]
+    if len(accepted) == 1:
+        candidate_record = accepted[0]
+    elif (
+        item.get("status") == "success"
+        and not manifest.get("logo")
+        and output_record is not None
+        and review_digest == output_record.get("sha256")
+    ):
+        candidate_record = {
+            "candidate_path": item.get("output"),
+            "candidate_sha256": output_record.get("sha256"),
+            "candidate_width": output_record.get("width"),
+            "candidate_height": output_record.get("height"),
+        }
+    else:
+        return ["accepted main-image review must match exactly one accepted candidate attempt"]
+    errors = _validate_main_image_review_registration(
+        registration,
+        item,
+        manifest,
+        candidate_record,
+        expected_attempt=int(registration.get("attempt", 0) or 0),
+        expected_passed=True,
+    )
+    if item.get("status") == "success":
+        if manifest.get("logo"):
+            decision = item.get("logo_decision")
+            base_field = "prepared_base" if decision == "direct_overlay" else "conflict_reference_base"
+            base_value = str(item.get(base_field) or "")
+            base_path = Path(base_value).resolve() if base_value else None
+            if base_path is None or not base_path.is_file():
+                errors.append("Logo-combined main-image success is missing its reviewed accepted base")
+            elif sha256_file(base_path) != candidate_record.get("candidate_sha256"):
+                errors.append("Logo-combined main-image accepted base differs from the reviewed candidate")
+        elif output_record is None:
+            errors.append("main-image success requires a validated output")
+        else:
+            for field, candidate_field in (
+                ("sha256", "candidate_sha256"),
+                ("width", "candidate_width"),
+                ("height", "candidate_height"),
+            ):
+                if output_record.get(field) != candidate_record.get(candidate_field):
+                    errors.append(f"main-image success output {field} differs from its reviewed candidate")
+    return errors
+
+
 def validate_localization_plan_registration(
     item: dict[str, Any],
     manifest: dict[str, Any],
@@ -1884,6 +3313,22 @@ def validate_auxiliary_json_path(path: Path, protected_paths: Iterable[Path] = (
             if isinstance(entry, dict) and entry.get("path"):
                 if resolved == Path(str(entry["path"])).expanduser().resolve():
                     raise ValueError(f"auxiliary JSON must not overwrite registered {field} data")
+        for item in manifest.get("items", []):
+            if not isinstance(item, dict):
+                continue
+            for field in ("main_image_plan_registration", "main_image_quality_review"):
+                entry = item.get(field)
+                if isinstance(entry, dict) and entry.get("path"):
+                    if resolved == Path(str(entry["path"])).expanduser().resolve():
+                        raise ValueError(f"auxiliary JSON must not overwrite registered {field} data")
+            review_registration = item.get("main_image_quality_review")
+            review = review_registration.get("record") if isinstance(review_registration, dict) else None
+            views = review.get("views") if isinstance(review, dict) else None
+            if isinstance(views, dict):
+                for view in views.values():
+                    if isinstance(view, dict) and view.get("path"):
+                        if resolved == Path(str(view["path"])).expanduser().resolve():
+                            raise ValueError("auxiliary JSON must not overwrite main-image review evidence")
     return resolved
 
 
@@ -2076,7 +3521,12 @@ def _accepted_no_reference_base(
     history = item.get("attempt_history")
     if not base_value or not isinstance(history, list):
         return None, None, ["logo_conflict requires a prior accepted no-reference pure-generation base"]
-    expected_stage: str | None = "pure_generation" if mode == "localization" else None
+    if mode == "localization":
+        expected_stage: str | None = "pure_generation"
+    elif manifest.get("workflow") == COMMERCE_MAIN_IMAGE_WORKFLOW:
+        expected_stage = COMMERCE_MAIN_IMAGE_ATTEMPT_STAGE
+    else:
+        expected_stage = None
     candidates: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
     for record in history:
         if not isinstance(record, dict):
@@ -2303,7 +3753,29 @@ def validate_logo_conflict_attempt_contract(
     if not conflict_records:
         return []
     errors: list[str] = []
+    candidate_records = [
+        record for record in conflict_records if record.get("failure_type") != "infrastructure"
+    ]
+    infrastructure_records = [
+        record for record in conflict_records if record.get("failure_type") == "infrastructure"
+    ]
+    if len(candidate_records) > 3:
+        errors.append("logo_conflict quality attempt budget exceeds 3")
+    if len(infrastructure_records) > 4:
+        errors.append("logo_conflict infrastructure attempt budget exceeds 4")
     seen_attempts: set[int] = set()
+    seen_candidate_paths: set[str] = set()
+    seen_candidate_hashes: set[str] = set()
+    accepted_candidate_records: list[dict[str, Any]] = []
+    candidate_fields = (
+        "candidate_path",
+        "candidate_sha256",
+        "candidate_width",
+        "candidate_height",
+    )
+    work_root = (
+        Path(str(manifest.get("task_dir") or "")) / ".xobi" / "work"
+    ).resolve()
     total_attempts = int(item.get("attempts", 0) or 0)
     for record in conflict_records:
         try:
@@ -2314,6 +3786,70 @@ def validate_logo_conflict_attempt_contract(
             errors.append("logo_conflict attempts must use unique positive attempt numbers within the task total")
             continue
         seen_attempts.add(attempt)
+        failure_type = record.get("failure_type")
+        error_value = str(record.get("error") or "").strip()
+        if failure_type not in {None, "quality", "infrastructure"}:
+            errors.append("logo_conflict attempt has an invalid failure_type")
+        elif failure_type is not None and (
+            record.get("status") == "success" or not error_value
+        ):
+            errors.append("failed logo_conflict attempts require a non-success status and error")
+        elif failure_type is None and (
+            record.get("status") not in {"pending", "success"} or error_value
+        ):
+            errors.append("accepted logo_conflict attempts require pending/success status without an error")
+        if failure_type == "infrastructure":
+            if any(field in record for field in candidate_fields):
+                errors.append("logo_conflict infrastructure attempts must not claim a candidate")
+        else:
+            candidate_value = str(record.get("candidate_path") or "")
+            candidate_digest = str(record.get("candidate_sha256") or "")
+            candidate_path = Path(candidate_value).resolve() if candidate_value else None
+            candidate_key = canonical_path_key(candidate_path) if candidate_path is not None else ""
+            if candidate_path is None:
+                errors.append("logo_conflict candidate attempt requires candidate_path evidence")
+            else:
+                try:
+                    candidate_path.relative_to(work_root)
+                except ValueError:
+                    errors.append("logo_conflict candidate evidence must remain inside .xobi/work")
+                if candidate_key in seen_candidate_paths:
+                    errors.append("logo_conflict attempts must use a distinct frozen candidate path")
+                else:
+                    seen_candidate_paths.add(candidate_key)
+            if not re.fullmatch(r"[0-9a-f]{64}", candidate_digest):
+                errors.append("logo_conflict candidate_sha256 is invalid")
+            elif candidate_digest in seen_candidate_hashes:
+                errors.append("logo_conflict attempts must not reuse the same candidate hash")
+            else:
+                seen_candidate_hashes.add(candidate_digest)
+            declared_dimensions: list[int] = []
+            for dimension in ("candidate_width", "candidate_height"):
+                value = record.get(dimension)
+                if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                    errors.append(f"logo_conflict attempt {dimension} must be a positive integer")
+                else:
+                    declared_dimensions.append(value)
+            if candidate_path is not None:
+                if not candidate_path.is_file():
+                    errors.append("logo_conflict frozen candidate evidence is missing")
+                else:
+                    try:
+                        if sha256_file(candidate_path) != candidate_digest:
+                            errors.append("logo_conflict frozen candidate hash changed")
+                        with Image.open(candidate_path) as raw:
+                            if int(getattr(raw, "n_frames", 1) or 1) != 1:
+                                raise ValueError("candidate is multi-frame")
+                            candidate_image = ImageOps.exif_transpose(raw)
+                            candidate_image.load()
+                            actual_dimensions = list(candidate_image.size)
+                    except (OSError, UnidentifiedImageError, ValueError) as exc:
+                        errors.append(f"logo_conflict frozen candidate is not a readable static image: {exc}")
+                    else:
+                        if len(declared_dimensions) == 2 and actual_dimensions != declared_dimensions:
+                            errors.append("logo_conflict frozen candidate dimensions changed")
+            if failure_type is None:
+                accepted_candidate_records.append(record)
         errors.extend(validate_logo_conflict_gate(item, manifest, before_attempt=attempt))
         try:
             attempt_time = datetime.fromisoformat(str(record.get("recorded_at") or ""))
@@ -2325,6 +3861,55 @@ def validate_logo_conflict_attempt_contract(
                 errors.append("logo_conflict plan and geometry must be frozen before its attempt")
         except (AttributeError, ValueError):
             errors.append("logo_conflict requires valid plan, geometry, and attempt timestamps")
+    if len(accepted_candidate_records) > 1:
+        errors.append("logo_conflict may preserve only one accepted candidate attempt")
+    if accepted_candidate_records:
+        accepted_record = accepted_candidate_records[0]
+        try:
+            accepted_attempt = int(accepted_record.get("attempt", 0) or 0)
+        except (TypeError, ValueError):
+            accepted_attempt = 0
+        later_conflict_attempt = False
+        for record in conflict_records:
+            try:
+                record_attempt = int(record.get("attempt", 0) or 0)
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if record_attempt > accepted_attempt:
+                later_conflict_attempt = True
+                break
+        if later_conflict_attempt:
+            errors.append("logo_conflict stage is closed after its accepted candidate")
+        prepared_value = str(item.get("prepared_base") or "")
+        prepared_path = Path(prepared_value).resolve() if prepared_value else None
+        accepted_path_value = str(accepted_record.get("candidate_path") or "")
+        accepted_path = Path(accepted_path_value).resolve() if accepted_path_value else None
+        if (
+            prepared_path is None
+            or accepted_path is None
+            or canonical_path_key(prepared_path) != canonical_path_key(accepted_path)
+        ):
+            errors.append("accepted logo_conflict candidate must remain the current prepared_base")
+        elif not prepared_path.is_file() or sha256_file(prepared_path) != accepted_record.get(
+            "candidate_sha256"
+        ):
+            errors.append("accepted logo_conflict prepared_base hash changed")
+        relocation_record, relocation_errors = recompute_logo_relocation_validation(item, manifest)
+        errors.extend(
+            f"accepted logo_conflict relocation guard: {message}"
+            for message in relocation_errors
+        )
+        if not isinstance(relocation_record, dict) or relocation_record.get("passed") is not True:
+            errors.append("accepted logo_conflict candidate requires passing relocation evidence")
+        else:
+            if item.get("logo_relocation_validation") != relocation_record:
+                errors.append(
+                    "accepted logo_conflict item relocation evidence does not match current pixels"
+                )
+            if accepted_record.get("logo_relocation_validation") != relocation_record:
+                errors.append(
+                    "accepted logo_conflict attempt is not bound to its relocation evidence"
+                )
     return errors
 
 
@@ -2415,6 +4000,27 @@ def validate_localization_attempt_contract(
         if len(infrastructure_attempts) > 4:
             errors.append(f"localization {stage} infrastructure attempt budget exceeds 4")
 
+    accepted_execution_records = [
+        (attempt, record)
+        for attempt, record in parsed_records
+        if record.get("failure_type") is None
+        and record.get("status") in {"pending", "success"}
+        and record.get("attempt_stage") in {
+            "pure_generation",
+            "reference_edit",
+            "pure_rebuild",
+        }
+    ]
+    for accepted_attempt, accepted_record in accepted_execution_records:
+        accepted_stage = accepted_record.get("attempt_stage")
+        if any(
+            attempt > accepted_attempt and record.get("attempt_stage") == accepted_stage
+            for attempt, record in parsed_records
+        ):
+            errors.append(
+                f"localization {accepted_stage} stage is closed after its accepted candidate"
+            )
+
     pure_attempts = sorted(
         attempt
         for attempt, record in parsed_records
@@ -2480,8 +4086,31 @@ def validate_localization_attempt_contract(
                 and record.get("attempt_stage") in {execution_stage, "logo_conflict"}
             ):
                 matching_success.append(record)
-        if attempts < 1 or len(matching_success) != 1:
-            errors.append("localization success requires one recorded positive final image attempt")
+        deterministic_logo_finalize = bool(
+            manifest is not None
+            and manifest.get("logo")
+            and item.get("logo_decision") == "direct_overlay"
+        )
+        deterministic_final_candidates = [
+            record
+            for attempt, record in accepted_execution_records
+            if attempt == attempts
+            and record.get("attempt_stage") == execution_stage
+            and record.get("status") == "pending"
+        ]
+        if attempts < 1 or (
+            len(matching_success) != 1
+            and not (
+                deterministic_logo_finalize
+                and not matching_success
+                and len(deterministic_final_candidates) == 1
+                and len(accepted_execution_records) == 1
+            )
+        ):
+            errors.append(
+                "localization success requires one positive final image attempt or one latest "
+                "accepted candidate followed only by deterministic Logo finalization"
+            )
         if execution_stage in {"pure_generation", "reference_edit", "pure_rebuild"}:
             execution_attempts = quality_attempts_for_stage(item, execution_stage)
             if not execution_attempts or len(execution_attempts) > 3:
@@ -2913,6 +4542,8 @@ def validate_item_contract(
     if item.get("status") != "success":
         return []
     errors: list[str] = []
+    if manifest.get("workflow") == COMMERCE_MAIN_IMAGE_WORKFLOW:
+        errors.extend(validate_main_image_quality_review(item, manifest, output_record))
     if manifest.get("mode") == "localization":
         errors.extend(validate_localization_plan_registration(item, manifest))
         plan = item.get("localization_plan")
@@ -3523,6 +5154,35 @@ def validate_manifest(data: dict[str, Any], check_files: bool = True) -> list[di
     items = raw_items
     if mode not in {"edit", "generate", "localization"}:
         errors.append({"task_id": "<manifest>", "error": f"invalid manifest mode: {mode or '<missing>'}"})
+    workflow = data.get("workflow")
+    if workflow not in {None, COMMERCE_MAIN_IMAGE_WORKFLOW}:
+        errors.append({"task_id": "<manifest>", "error": "invalid manifest workflow"})
+    if workflow == COMMERCE_MAIN_IMAGE_WORKFLOW:
+        if mode not in {"edit", "generate"}:
+            errors.append({
+                "task_id": "<manifest>",
+                "error": "commerce_main_image workflow is only available for edit and generate",
+            })
+        if is_legacy_read_only_manifest(data):
+            errors.append({
+                "task_id": "<manifest>",
+                "error": "legacy read-only manifests cannot declare commerce_main_image",
+            })
+        if not operation_authorizes_commerce_main_image(str(data.get("operation") or "")):
+            errors.append({
+                "task_id": "<manifest>",
+                "error": "commerce_main_image operation lacks explicit creative authorization",
+            })
+        for message in validate_commerce_main_image_policy(data):
+            errors.append({"task_id": "<manifest>", "error": message})
+    elif data.get("main_image_policy") is not None:
+        errors.append({
+            "task_id": "<manifest>",
+            "error": "main_image_policy is only valid for commerce_main_image",
+        })
+    # Route intent is enforced when current manifests are created by preflight.
+    # Do not infer a missing workflow during later verification: schema v4 predates
+    # this optional field, and older valid v4 tasks may already use main-image words.
     compatibility = data.get("manifest_compatibility")
     legacy_read_only = is_legacy_read_only_manifest(data)
     if compatibility is not None and not legacy_read_only:
@@ -3664,6 +5324,22 @@ def validate_manifest(data: dict[str, Any], check_files: bool = True) -> list[di
                 _, approval_errors = validate_pure_rebuild_approval(item, data)
                 for message in approval_errors:
                     errors.append({"task_id": task_id, "error": message})
+        if workflow == COMMERCE_MAIN_IMAGE_WORKFLOW:
+            for message in validate_main_image_plan_registration(item, data):
+                errors.append({"task_id": task_id, "error": message})
+            for message in validate_main_image_attempt_contract(item, data):
+                errors.append({"task_id": task_id, "error": message})
+        else:
+            for field in (
+                "main_image_plan",
+                "main_image_plan_registration",
+                "main_image_quality_review",
+            ):
+                if item.get(field) is not None:
+                    errors.append({
+                        "task_id": task_id,
+                        "error": f"{field} is only valid for commerce_main_image",
+                    })
         for message in validate_logo_conflict_attempt_contract(item, data):
             errors.append({"task_id": task_id, "error": message})
         if check_files and item.get("status") == "success":
