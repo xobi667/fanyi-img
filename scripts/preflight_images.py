@@ -30,7 +30,7 @@ from manifest_utils import (
 )
 
 
-IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
+IMAGE_EXTS = {".jpg", ".jpeg", ".jfif", ".png", ".webp", ".bmp", ".tif", ".tiff"}
 UNSUPPORTED_IMAGE_EXTS = {".psd", ".psb"}
 MODES = {"edit", "generate", "localization"}
 ROLES = {"target", "style_reference", "logo", "asset", "layout_reference"}

@@ -357,6 +357,7 @@ FORMAT_BY_SUFFIX = {
     ".png": "PNG",
     ".jpg": "JPEG",
     ".jpeg": "JPEG",
+    ".jfif": "JPEG",
     ".webp": "WEBP",
     ".bmp": "BMP",
     ".tif": "TIFF",

@@ -72,21 +72,17 @@ class SkillRuleRegressionTests(unittest.TestCase):
             with self.subTest(path=path.relative_to(REPO_ROOT)):
                 self.assertTrue(path.is_file(), f"缺少规则文件：{path}")
 
-    def test_localization_defaults_to_pure_generation_without_references(self) -> None:
-        no_reference = re.compile(
-            r"(?:不传|不得传|禁止传|REFERENCE INPUT:\s*NONE).{0,80}(?:参考图|reference)",
-            re.IGNORECASE | re.DOTALL,
-        )
-
+    def test_localization_uses_only_the_original_source_reference(self) -> None:
         for path in LOCALIZATION_POLICY_FILES:
             text = read_utf8(path)
             with self.subTest(path=path.relative_to(REPO_ROOT)):
-                self.assertIn("pure_generation_localization", text)
-                self.assertRegex(text, no_reference)
+                self.assertRegex(text, re.compile(r"(?:当前|原始).{0,40}源图.{0,80}(?:唯一|只)", re.DOTALL))
 
         prompt_text = read_utf8(PROMPTS)
-        self.assertIn("PURE GENERATION LOCALIZATION", prompt_text)
-        self.assertIn("REFERENCE INPUT: NONE", prompt_text)
+        self.assertIn("referenced_image_paths", prompt_text)
+        self.assertIn("num_last_images_to_include", prompt_text)
+        self.assertRegex(prompt_text, re.compile(r"两者.{0,20}(?:不能|不得).{0,20}共存", re.DOTALL))
+        self.assertNotIn("PURE GENERATION LOCALIZATION", prompt_text)
 
     def test_localization_plan_and_ratio_are_explicit_and_auditable(self) -> None:
         localization = read_utf8(LOCALIZATION)
@@ -94,26 +90,19 @@ class SkillRuleRegressionTests(unittest.TestCase):
         quality = read_utf8(QUALITY)
         combined = "\n".join((localization, prompts, quality))
 
-        self.assertIn("output_ratio", combined)
-        self.assertIn("target_size", combined)
-        self.assertRegex(localization, re.compile(r"每张图.{0,160}localization_plan", re.DOTALL))
-        self.assertIn("source_sha256", localization)
-        self.assertIn("text_blocks", localization)
-        self.assertIn("non_text_inventory", localization)
-        self.assertRegex(localization, re.compile(r"保持原比例.{0,160}(?:画布|裁切|布局).{0,80}保持", re.DOTALL))
-        self.assertIn("minimum canvas adaptation", prompts)
+        self.assertRegex(localization, re.compile(r"目标图片.{0,40}目标语言.{0,40}输出比例", re.DOTALL))
+        self.assertRegex(localization, re.compile(r"保持原比例.{0,20}保持原画幅、裁切和布局", re.DOTALL))
+        self.assertIn("800×800", combined)
+        self.assertIn("900–1024KB", combined)
+        self.assertIn("final_optimize_images.py", combined)
 
-    def test_affirmative_default_pure_generation_policy_is_mandatory(self) -> None:
-        for path in LOCALIZATION_POLICY_FILES + (PROMPTS,):
-            text = read_utf8(path)
-            with self.subTest(path=path.relative_to(REPO_ROOT)):
-                self.assertRegex(
-                    text,
-                    re.compile(r"(?:默认.{0,50}纯生图|pure_generation_localization)", re.IGNORECASE | re.DOTALL),
-                )
+    def test_localization_reference_policy_and_other_modes_are_separate(self) -> None:
+        combined = "\n".join(read_utf8(path) for path in LOCALIZATION_POLICY_FILES + (PROMPTS,))
+        self.assertIn("referenced_image_paths", combined)
+        self.assertIn("num_last_images_to_include", combined)
+        self.assertRegex(combined, re.compile(r"失败候选.{0,80}(?:不得|不引用|禁止)", re.DOTALL))
         runtimes = read_utf8(RUNTIMES)
-        self.assertRegex(runtimes, re.compile(r"(?:不传|不得传).{0,80}(?:参考图|reference)", re.IGNORECASE | re.DOTALL))
-        self.assertRegex(runtimes, re.compile(r"Logo.{0,100}(?:唯一|例外)", re.IGNORECASE | re.DOTALL))
+        self.assertRegex(runtimes, re.compile(r"generate/edit/commerce_main_image.{0,80}纯生图", re.DOTALL))
 
     def test_text_only_content_lock_is_mandatory_without_rebuild_approval(self) -> None:
         prompt_text = read_utf8(PROMPTS)
@@ -122,16 +111,12 @@ class SkillRuleRegressionTests(unittest.TestCase):
 
         self.assertIn("STRICT CONTENT LOCK:", prompt_text)
         self.assertIn("STRICT NO-ADDITION RULE:", prompt_text)
-        self.assertIn("pure_generation_localization", localization_text)
-        self.assertRegex(skill_text, re.compile(r"纯生图.{0,80}(?:只替换|唯一授权变化|只翻译)", re.DOTALL))
-        self.assertIn("task_id", localization_text)
-        self.assertIn("source_sha256", localization_text)
-        self.assertRegex(localization_text, re.compile(r"3 次.{0,80}(?:报告失败|不得登记第 4 次成功)", re.DOTALL))
-        self.assertIn("user_exact", localization_text)
-        self.assertIn("requested_target_text", localization_text)
-        self.assertIn("non_text_inventory", localization_text)
-        self.assertRegex(localization_text, re.compile(r"不得运行.{0,80}compose_localization", re.DOTALL))
-        self.assertRegex(localization_text, re.compile(r"不需要.{0,80}(?:授权|许可)", re.DOTALL))
+        self.assertNotIn("pure_generation_localization", localization_text)
+        self.assertRegex(skill_text, re.compile(r"参考图翻译.{0,80}(?:只替换|只翻译)", re.DOTALL))
+        self.assertRegex(localization_text, re.compile(r"每张最多 3 个.{0,40}质量尝试", re.DOTALL))
+        self.assertRegex(localization_text, re.compile(r"用户提供精确目标文案.{0,80}逐字照写", re.DOTALL))
+        self.assertIn("compose_localization.py", localization_text)
+        self.assertIn("final_optimize_images.py", localization_text)
 
     def test_logo_policy_separates_collision_and_spacing(self) -> None:
         text = read_utf8(LOGO)
@@ -140,7 +125,7 @@ class SkillRuleRegressionTests(unittest.TestCase):
         self.assertRegex(text, re.compile(r"`safe_zone`.{0,80}只用于.{0,40}(?:间距|布局|锚点)", re.DOTALL))
         self.assertRegex(text, re.compile(r"不得用它扩大冲突范围"))
 
-    def test_logo_is_the_only_explicitly_requested_reference_exception(self) -> None:
+    def test_logo_reference_route_remains_explicit_and_separate(self) -> None:
         for path in (SKILL, WORKFLOW, RUNTIMES, LOGO):
             text = read_utf8(path)
             with self.subTest(path=path.relative_to(REPO_ROOT)):
@@ -151,12 +136,14 @@ class SkillRuleRegressionTests(unittest.TestCase):
 
         skill_text = read_utf8(SKILL)
         logo_text = read_utf8(LOGO)
-        self.assertRegex(skill_text, re.compile(r"源图本来含有 Logo.{0,100}不构成例外", re.DOTALL))
-        self.assertRegex(logo_text, re.compile(r"源图已有 Logo.{0,100}不构成例外", re.DOTALL))
+        localization_text = read_utf8(LOCALIZATION)
+        self.assertRegex(skill_text, re.compile(r"源图已有 Logo.{0,40}不等于用户要求添加 Logo", re.DOTALL))
+        self.assertRegex(logo_text, re.compile(r"源图已有 Logo.{0,100}不构成 Logo 例外", re.DOTALL))
         self.assertRegex(
             logo_text,
-            re.compile(r"`logo_conflict`.{0,80}唯一允许.{0,40}参考图", re.DOTALL),
+            re.compile(r"`logo_conflict`.{0,80}Logo 流程中唯一允许.{0,40}参考图", re.DOTALL),
         )
+        self.assertRegex(localization_text, re.compile(r"源图.{0,80}唯一.{0,40}`referenced_image_paths`", re.DOTALL))
 
         agent_text = read_utf8(REPO_ROOT / "agents" / "openai.yaml")
         self.assertRegex(agent_text, re.compile(r"无(?:真实)?遮挡.{0,40}不(?:额外)?调用(?:图片)?模型"))

@@ -24,7 +24,7 @@ from manifest_utils import (
 )
 
 
-IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
+IMAGE_EXTS = {".jpg", ".jpeg", ".jfif", ".png", ".webp", ".bmp", ".tif", ".tiff"}
 DEFAULT_LOGO = Path(__file__).resolve().parent.parent / "assets" / "we-film-logo-template.png"
 DEFAULT_LOGO_REFERENCE_BOX = LOGO_REFERENCE_BOX
 DEFAULT_ANCHOR_TOLERANCE = LOGO_ANCHOR_TOLERANCE
@@ -181,7 +181,7 @@ def save_image(image: Image.Image, output: Path, min_kb: int | None, max_kb: int
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(f".{output.stem}.tmp-{os.getpid()}-{uuid.uuid4().hex}{output.suffix}")
     try:
-        if output.suffix.lower() in {".jpg", ".jpeg"}:
+        if output.suffix.lower() in {".jpg", ".jpeg", ".jfif"}:
             if max_kb:
                 low, high, best = 1, 100, jpeg_bytes(image, 1)
                 while low <= high:

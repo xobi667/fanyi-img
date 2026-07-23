@@ -2,7 +2,7 @@
 
 统一顺序：执行方式 → 唯一目标变化 → 不变内容锁 → 文字/素材 → 比例 → 禁止项。每个 task、每个 attempt 使用独立 prompt；只描述当前图。
 
-除 Logo 冲突底图专属流程外，所有原生图片模型调用都使用纯生图且不传参考图、最近会话图片或任何隐式图片上下文。协调者可以先查看源图并把盘点结果写入 prompt，但工具调用的 reference input 必须为空。纯生图只改变执行方式，不扩大用户授权的修改范围。
+generate、普通 edit 和 commerce_main_image 继续使用纯生图且不传参考图。localization 恢复 fanyi 参考图编辑：只传当前 task 的源图，禁止附带失败候选或其他图片。Logo 冲突底图仍按 Logo 专属规则处理。
 
 ## generate
 
@@ -53,29 +53,27 @@ If this task includes a later active Logo overlay, do not draw, imitate, spell, 
 
 主图重试只补强当前失败轴，例如 `weak_single_focus`、`hero_occupancy_or_margin_fail`、`cluttered_hierarchy`、`material_unrealistic`、`scale_or_perspective_fail`、`lighting_or_shadow_fail`、`thumbnail_256_fail`、`thumbnail_160_fail` 或 `cheap_cliche_or_invented_claim`；不得放松商品与精确文字锁，也不得把失败候选作为下一次参考。
 
-## localization 默认纯生图只换字
+## localization：fanyi 参考图只换字
 
-使用 [localization.md](localization.md) 的逐图冻结计划组装 prompt。不得传源图或任何参考图；prompt 必须包含：
+把当前源图作为唯一 target reference，使用 [localization.md](localization.md) 的逐图文字锁。prompt 必须包含：
 
 ```text
-PURE GENERATION LOCALIZATION. REFERENCE INPUT: NONE. Generate the complete image from the frozen source inventory. This is a full-frame generation whose only authorized content change is translating the already-existing text.
+Use the current source image as the sole authoritative edit reference.
+Translate every visible source-language text block into {TARGET_LANGUAGE}.
+Replace only text that already exists in the source image.
 
-SOURCE CONTENT INVENTORY: {COMPLETE_SOURCE_INVENTORY}.
-TEXT BLOCK MAP: The source contains exactly {COUNT} translatable text blocks at {SOURCE_POSITIONS}, with roles, reading order, hierarchy, colors, alignment, and relationships recorded as {SOURCE_TEXT_BLOCKS}.
-EXACT REPLACEMENTS: Replace those blocks one-for-one with exactly {TRANSLATED_TEXT_BLOCKS}. Keep every numeric value, model, quantity, dimension, currency, and unit meaning unchanged. For user_exact blocks, reproduce REQUESTED_TARGET_TEXT character-for-character without shortening, paraphrasing, polishing, correcting, or substitution.
+STRICT NO-ADDITION RULE: Do not add, invent, infer, complete, or hallucinate any new title, slogan, selling point, label, badge, parameter, footer, watermark, decoration, icon, object, or pseudo-text. Areas without text in the source must remain text-free.
 
-STRICT CONTENT LOCK: Reproduce the same product, silhouette, materials, people, photos, icons, logos, badges, borders, color blocks, background, shadows, textures, decorations, quantities, order, crop, scale, positions, spacing, composition, layout, and relationships. Do not redesign, beautify, restyle, recolor, move, add, remove, replace, or infer anything except the listed text replacements.
+TEXT SCOPE LOCK: Keep the same number, semantic scope, approximate position, hierarchy, color relationship, alignment, and reading order of text blocks. Preserve every number, model, quantity, size, currency, and unit meaning.
 
-TEXT LAYOUT LOCK: Keep each text module in its original position and visual hierarchy. Adapt only wrapping, character spacing, and font size inside the original text module when required by the target language. Do not move or enlarge the module, add a panel, move a non-text element, compress or stretch glyphs, overlap, crop, overflow, or make text unreadably small.
+STRICT CONTENT LOCK: Keep the exact product, people, photos, Logo, icons, borders, color blocks, background, shadows, textures, quantities, crop, scale, positions, spacing, composition, and layout. Do not redesign, beautify, restyle, recolor, move, add, remove, or replace any non-text content.
 
-STRICT NO-ADDITION RULE: Keep the visible text-block count and semantic scope one-for-one. Blank/no-text areas must remain text-free. Do not invent slogans, selling points, labels, badges, parameters, footers, watermarks, decorations, objects, or pseudo-text.
+PRODUCT GEOMETRY LOCK: Preserve natural aspect ratio, silhouette, thickness, component proportions, material texture, and perspective. Never stretch, squash, widen, narrow, flatten, elongate, or locally enlarge the product.
 
-Output ratio: {RATIO OR ORIGINAL}. For a user-confirmed different ratio, ALLOWED_CHANGES are limited to minimum canvas adaptation, proportional subject scaling, and necessary text wrapping. Do not change product shape, background style, information count, or hierarchy.
+Output ratio: {RATIO}. This is a translation edit, not a redesign.
 ```
 
-图片模型返回的是完整 `pure_generation_candidate`。逐图验收通过后直接把该候选作为 final 的视觉内容；不得运行 `compose_localization.py`、本地文字框蒙版、局部像素回填或第二次 AI 编辑。质量重试只增加本次失败点，例如某块拼写、漏译、额外文字、商品漂移或版式漂移；不得放松内容锁。初次结果加 2 次质量重试仍失败时停止并报告，不得切换为参考编辑或登记第 4 次成功。没有候选的基础设施失败独立按 [quality.md](quality.md) 的 4 次预算处理。
-
-旧版 `text_only_reference_edit`、`pure_rebuild_approval` 和 composition provenance 只允许离线读取、验证、诊断或导出，不得为旧 manifest 发起新的 reference-edit/pure-rebuild 图片调用，也不得出现在新任务 prompt 中。继续处理时迁移到当前无参考纯生图策略。
+本地源图使用 `referenced_image_paths`；仅会话图片使用能覆盖当前源图的最小 `num_last_images_to_include`，两者不能共存。每次重试重新引用原始源图，不引用失败候选。候选通过后直接作为 fanyi 原始翻译成品，不运行 `compose_localization.py`。1:1 且用户未覆盖旧版交付规格时，最后运行 `final_optimize_images.py`。
 
 ## 商品几何锁
 

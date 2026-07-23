@@ -17,21 +17,11 @@
 
 ## 默认图片调用方式
 
-新 manifest 的图片模型策略必须精确等价于：
+新 manifest 中 generate、普通 edit 和 `commerce_main_image` 继续使用无参考纯生图；localization 单独执行恢复后的 fanyi 参考图翻译；Logo 继续使用自身的确定性叠加与冲突重排规则。
 
-```json
-{
-  "default": "pure_generation",
-  "reference_images_allowed": false,
-  "logo_exception": ["deterministic_overlay", "conflict_relocation"]
-}
-```
-
-`reference_images_allowed=false` 同时覆盖 target/source/reference/attachment/recent-image 和宿主等价字段；唯一模型参考例外是已通过真实冲突门禁的 `logo_conflict`，确定性 Logo overlay 本身不调用模型。
-
-- generate、edit 和 localization 全部默认调用无参考图的原生纯生图。协调者可以查看源图、盘点文字和视觉内容，但图片模型调用不传 target、source、reference、附件、最近会话图片或任何隐式图片上下文。
+- generate、普通 edit 和 `commerce_main_image` 的图片模型调用不传 target、source、reference、附件、最近会话图片或任何隐式图片上下文。
 - edit 执行 `pure_generation_edit`，整张重建但只允许用户点名项变化；其余商品、文字、对象、数量、背景、位置和版式锁定。
-- localization 执行 `pure_generation_localization`，整张重建但只允许把已有文字替换为译文；商品、内容、数量、背景和版式锁定。
+- localization 把当前 task 的原始源图作为唯一参考，只替换原图已有文字。不得附带失败候选、另一 task、Logo、pilot 或其他图片。
 - `commerce_main_image` 只在用户明确要求制作、重做或优化整张主图时启用；无输入仍以 generate、有输入仍以 edit 预检，但用冻结艺术指导授权创意呈现。单独翻译和普通 edit 不得升级到该 route。
 - 图片模型返回完整候选。候选通过验收后直接作为成品视觉内容；除 Logo 最后一步确定性叠加外，不使用本地蒙版、裁贴、文字框合成或像素回填。
 - 只有用户明确要求添加 Logo 并确认本次 `logo` 资产时才启用 Logo 例外；源图已有 Logo 或盘点时发现 Logo 都不算。该添加任务中唯一的参考编辑例外是 Logo 冲突底图：本次 active Logo 会遮挡信息模块时，可把尚未叠加本次 active Logo 的 `conflict_reference_base` 作为唯一参考，只重排冲突模块；源图原有 Logo 仍必须保留。
@@ -128,13 +118,12 @@ python scripts/update_manifest.py --manifest <任务目录/.xobi/manifest.json> 
 严格执行 [localization.md](localization.md)：
 
 1. 查看源图，逐块冻结原文、准确译文、位置、角色、顺序和排版，并盘点全部商品、照片、人物、Logo、图标、徽章、边框、色块、背景、阴影、纹理、数量、裁切、位置、构图和版式。
-2. 在 attempts=0 时为每个 task 落盘并登记独立 `.xobi/work/<task_id>-localization-plan.json`，固定 `mode=pure_generation_localization`、`reference_policy=none`、逐块译文和完整内容锁。
-3. 使用 `PURE GENERATION LOCALIZATION` prompt 调用原生图片模型，不传源图、参考图或最近会话图片；返回完整 `.xobi/work/pure-generation-candidate-*`。
+2. 运行 `scripts/preflight_fanyi.py`，为每张源图建立独立 task、worker、原始候选与最终输出；在第一次图片调用前冻结逐块译文和完整内容锁。
+3. 使用 fanyi 参考图翻译 prompt 调用原生图片模型。当前源图是唯一参考：本地文件使用 `referenced_image_paths`，仅会话图片使用覆盖当前源图所需的最小 `num_last_images_to_include`，两者不得同时使用。返回完整 `.xobi/work/fanyi-raw-candidate-*`。
 4. 把 source/candidate 并排查看，逐字核对译文，并逐项核对所有非文字内容、数量、商品、背景、位置、构图和版式。候选只要出现额外变化就失败。
-5. 验收通过的完整候选直接成为无 Logo final 的视觉内容，或登记为组合 Logo 任务的 `localized_base`；接受更新立即封闭该 task 的 `pure_generation` 图片阶段，后续不得再追加该阶段的 quality 或 infrastructure attempt。允许复制、移动、重命名和登记哈希，不得运行 `compose_localization.py`、文字框蒙版、局部裁贴、像素回填或第二次 AI 编辑。
-6. 每次图片调用连续登记 `attempt_stage=pure_generation`。初次结果后最多 2 次针对性重试，每图共 3 个 quality attempts；被接受的候选是该阶段最后一条 attempt，三次仍失败就停止并报告，不能登记第 4 次成功。
-
-不存在“先参考编辑三次，再取得纯生图授权”的流程；`text_only_reference_edit`、`pure_rebuild_approval` 和 composition provenance 只允许离线读取、验证、诊断或导出旧 manifest。旧任务不得新增 reference-edit/pure-rebuild 图片 attempt；要继续处理必须迁移到当前无参考纯生图策略。
+5. 验收通过的完整候选直接成为无 Logo 的翻译视觉内容，或作为组合 Logo 任务的 `localized_base`。不得运行 `compose_localization.py`、文字框蒙版、局部裁贴或像素回填。
+6. 每次重试都重新引用原始源图，绝不把失败候选作为下一次参考。初次结果后最多 2 次针对性重试，三次仍失败就停止并报告。
+7. 1:1 且用户没有覆盖旧版交付规格时，最后运行 `scripts/final_optimize_images.py`，交付 `800×800 JPG`、`900–1024KB`；这一步只做旧版尺寸与体积优化，不改画面内容。
 
 保持原比例时锁定画布与版式。用户明确新比例时，`ratio_adaptation.allowed_changes` 只能登记 `minimal_canvas_adaptation`、`proportional_subject_scaling` 和 `necessary_text_reflow`，不授权改商品形状、背景风格、信息数量和层级；若新比例与“不改版式”无法兼得，开工前确认选择。宿主不能直接生成精确规格时报告限制，不默认本地重采样。
 
@@ -144,7 +133,7 @@ python scripts/update_manifest.py --manifest <任务目录/.xobi/manifest.json> 
 
 1. 看完全部目标图并确认本次 Logo 资产、角色和哈希；只有用户明确要求时才允许默认模板。必要时先 dry-run 清理外围边，正式清理登记规范化谱系。
 2. 对每张最终尺寸运行 `apply_logo.py --dry-run --geometry-json ...`，用 `visible_bbox` 判断真实冲突。
-3. 仅添加 Logo 时，源图或用户明确要求的确定性尺寸/格式转换结果直接作为待叠加 base，不先运行 `pure_generation_edit`。组合任务只有在还要求生成、普通编辑或翻译时，才先完成对应的无参考纯生图阶段；第一阶段禁止生成本次 active Logo。
+3. 仅添加 Logo 时，源图或用户明确要求的确定性尺寸/格式转换结果直接作为待叠加 base，不先运行 `pure_generation_edit`。组合任务先完成对应的 generate、普通 edit 或 fanyi 翻译阶段；第一阶段禁止生成本次 active Logo。
 4. 无冲突时 Logo 阶段不调用图片模型，直接把合格底图记录为 `prepared_base` 并执行 `direct_overlay`；最终 success 更新不传 `--attempts` 或 `--attempt-stage`，不生成 attempt record，保留前序 attempts 总数。有冲突时写 `logo_plan.json` 和 layout family，把尚未叠加本次 active Logo 的底图登记为 `conflict_reference_base`。
 5. `logo_conflict` 是唯一参考编辑例外：只有真实冲突门禁通过且实际调用图片模型重排时，才用当前全局 attempt 加 1 登记独立 `attempt_stage=logo_conflict`。只把 `conflict_reference_base` 作为参考，只移动冲突信息模块。存在冲突的 family 先验收 pilot，再冻结布局并处理成员。每个可读候选传入并永久保留该次唯一的 `.xobi/work` `--prepared-base`；不得复用路径或 SHA-256。没有候选的 infrastructure attempt 禁止夹带 prepared/output 等候选产物。无冲突、`direct_overlay`、确定性叠加和最终 success 更新都不得增加图片 attempt。
 6. 运行逐模块 relocation guard，确认原位清除、目标位对应，且其他区域无变化；合格结果记录为 `prepared_base`。候选登记为 accepted pending/success 时必须在同一次 update 复算并把完全相同的 `logo_relocation_validation` 绑定到 item 与 attempt，不能等最终叠加后补验。候选通过后 Logo 图片阶段立即封口。
@@ -159,7 +148,8 @@ python scripts/apply_logo.py --input <底图> --output <最终图> --logo <activ
 ## 输入型 batch 与 ZIP
 
 ```text
-python scripts/preflight_images.py --input <路径> --mode <edit|localization> --operation <摘要> --ratio <比例|宽×高|original> [--target-language <语言>] [--output-format <png|jpg|jpeg|webp|bmp|tiff|source>] [--alpha-policy <preserve|required|forbidden>] [--logo <Logo>|--use-default-logo] [--exclude <路径或glob>] [--roles-file <JSON>] [--workers 4]
+python scripts/preflight_images.py --input <路径> --mode edit --operation <摘要> --ratio <比例|宽×高|original> [--output-format <png|jpg|jpeg|webp|bmp|tiff|source>] [--alpha-policy <preserve|required|forbidden>] [--logo <Logo>|--use-default-logo] [--exclude <路径或glob>] [--roles-file <JSON>] [--workers 4]
+python scripts/preflight_fanyi.py --input <路径> --target-language <语言> --ratio <比例|宽×高|original> [--workers 4]
 ```
 
 - 未指定时输出格式为 PNG，透明策略为 `preserve`。明确需要透明背景时使用 `--alpha-policy required`；不支持透明像素的格式必须在预检时拒绝。
@@ -168,7 +158,7 @@ python scripts/preflight_images.py --input <路径> --mode <edit|localization> -
 - PSD/PSB 写入 `unsupported_inputs` 并跳过，不偷偷转换、不安装强制依赖。
 - 每个 task 完成后通过 `update_manifest.py` 写独立 state 并在锁内合并；禁止直接改共享 JSON。
 
-Localization 计划登记发生在任何图片 attempt 之前；success 不得首次传计划，候选返回后不得扩大授权或改写译文。新任务的计划模式固定为 `pure_generation_localization`，普通翻译图片调用只使用 `attempt_stage=pure_generation`，不使用 `reference_edit`、`pure_rebuild` 或 `--pure-rebuild-approval`。翻译候选一经接受，`pure_generation` 阶段立即封口，不得追加质量或基础设施 attempt。普通 generate/edit 的第一阶段由 manifest `image_model_policy` 锁定为无参考纯生图，不使用 localization 专属 stage；任何模式真实进入 Logo 冲突时，必须在独立 pending 更新中先冻结 plan、geometry、decision、前序已接受 base 与 `conflict_reference_base`，再用后续独立 attempt 登记 `attempt_stage=logo_conflict`。只有实际调用图片模型的真实 `logo_conflict` 重排才增加该 attempt；无 Logo、`direct_overlay`、无真实冲突、确定性叠加和最终 success 更新都不增加 attempt。
+Localization 的计划必须在图片调用前冻结；候选返回后不得扩大授权或改写译文。每次调用只引用当前 task 的原始源图，失败重试仍从原图开始。普通 generate/edit 继续使用无参考纯生图；任何模式真实进入 Logo 冲突时，仍按 Logo 规则冻结并登记独立 `logo_conflict` attempt。
 
 success 必须验证文件存在、位于任务根目录、不是源图/Logo、路径唯一、扩展名与真实编码一致、透明契约、比例/尺寸正确，并记录 SHA-256；不同 task 的最终输出路径和内容哈希不得重复。
 

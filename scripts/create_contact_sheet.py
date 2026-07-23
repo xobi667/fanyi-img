@@ -12,7 +12,7 @@ from typing import Any
 from PIL import Image, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError
 
 
-IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
+IMAGE_EXTS = {".jpg", ".jpeg", ".jfif", ".png", ".webp", ".bmp", ".tif", ".tiff"}
 
 
 def load_label_font(size: int = 18) -> tuple[ImageFont.ImageFont, bool]:

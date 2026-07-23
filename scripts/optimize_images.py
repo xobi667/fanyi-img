@@ -11,7 +11,7 @@ from pathlib import Path
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 
-IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
+IMAGE_EXTS = {".jpg", ".jpeg", ".jfif", ".png", ".webp", ".bmp", ".tif", ".tiff"}
 REPORT_NAME = "xobi_img_optimize_report.md"
 
 
@@ -87,7 +87,10 @@ def allocate_outputs(sources: list[Path], input_dir: Path, output_dir: Path) -> 
     allocated: dict[Path, Path] = {}
     used: set[str] = set()
     for key in sorted(groups):
-        group = sorted(groups[key], key=lambda path: path.suffix.lower() not in {".jpg", ".jpeg"})
+        group = sorted(
+            groups[key],
+            key=lambda path: path.suffix.lower() not in {".jpg", ".jpeg", ".jfif"},
+        )
         for source in group:
             relative = source.relative_to(input_dir).with_suffix(".jpg")
             output_key = os.path.normcase(relative.as_posix()).casefold()

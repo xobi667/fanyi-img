@@ -211,6 +211,27 @@ class ManifestCliTests(unittest.TestCase):
         self.assertEqual("foo-jpg.png", outputs["foo.jpg"])
         self.assertEqual(2, len(set(outputs.values())))
 
+    def test_jfif_input_is_discovered_and_preserved_as_jpeg_source_format(self) -> None:
+        source = self.input_dir / "source.jfif"
+        Image.new("RGB", (64, 64), (20, 120, 220)).save(source, format="JPEG")
+
+        manifest_path, manifest = self.preflight("--output-format", "source")
+
+        self.assertEqual(1, len(manifest["items"]))
+        item = manifest["items"][0]
+        self.assertEqual("source.jfif", item["relative_path"])
+        self.assertEqual("JPEG", item["format"])
+        self.assertEqual("JPEG", item["expected_format"])
+        self.assertEqual(".jfif", Path(str(item["output"])).suffix.lower())
+
+        verified = self.run_cli(
+            VERIFY,
+            "--manifest",
+            manifest_path,
+            "--allow-pending",
+        )
+        self.assertTrue(json.loads(verified.stdout)["valid"])
+
     def test_logo_argument_excludes_logo_from_targets(self) -> None:
         self.write_png(self.input_dir / "target.png", (20, 120, 220))
         logo = self.input_dir / "logo.png"

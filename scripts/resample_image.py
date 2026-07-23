@@ -19,7 +19,7 @@ FORMAT_ALIASES = {
 }
 FORMAT_SUFFIXES = {
     "PNG": {".png"},
-    "JPEG": {".jpg", ".jpeg"},
+    "JPEG": {".jpg", ".jpeg", ".jfif"},
     "WEBP": {".webp"},
     "BMP": {".bmp"},
     "TIFF": {".tif", ".tiff"},
